@@ -67,6 +67,7 @@ Register a new device or recover an existing one.
 
 **Error cases:**
 - `409` with `reauth_method: "browser_confirmation"` — device exists, needs browser recovery flow
+- `403` with `reauth_method: "recovery_code"` and `recovery_code_status: "missing" | "invalid"` — device exists, recovery code is required or the saved one was rejected
 
 ---
 

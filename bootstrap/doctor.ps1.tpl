@@ -539,6 +539,13 @@ function Register-OrRefreshDevice {
         if ($resp.Status -eq 409 -and [string]$regResult.reauth_method -eq "browser_confirmation") {
             return (Start-DoctorBrowserRecoveryFlow -Payload $regResult)
         }
+        if ([string]$regResult.reauth_method -eq "recovery_code") {
+            $providedRecovery = Prompt-RecoveryCode
+            if ($null -eq $providedRecovery) { return $null }
+            if (-not $providedRecovery) { return $false }
+            $script:RecoveryCode = $providedRecovery
+            continue
+        }
 
         $detail = if ($regResult.detail) { [string]$regResult.detail } else { [string]$resp.Body }
         if (($resp.Status -eq 429) -or ($detail -match "openclaw plugin invite quota exhausted|wait for replenishment")) {
@@ -546,7 +553,7 @@ function Register-OrRefreshDevice {
             Emit-Message $script:RegistrationRateLimitSummary "warn"
             return $false
         }
-        if (($detail -match "recovery_code") -and (-not $script:RecoveryCode)) {
+        if ($detail -match "recovery_code") {
             $providedRecovery = Prompt-RecoveryCode
             if ($null -eq $providedRecovery) { return $null }
             if (-not $providedRecovery) { return $false }

@@ -3784,7 +3784,7 @@ fi
 self_register() {
     step "2/3" "Registering device 注册设备..."
 
-    local response detail reauth_method hw_field hw_candidates_field recovery_field referral_field invite_field worker_code_field utm_source_field utm_medium_field utm_campaign_field
+    local response detail reauth_method recovery_code_status hw_field hw_candidates_field recovery_field referral_field invite_field worker_code_field utm_source_field utm_medium_field utm_campaign_field
     while true; do
         hw_field=""
         hw_candidates_field=""
@@ -3822,9 +3822,18 @@ self_register() {
         fi
         detail="$(json_str detail "$response")"
         reauth_method="$(json_str reauth_method "$response")"
+        recovery_code_status="$(json_str recovery_code_status "$response")"
         if [ "$reauth_method" = "browser_confirmation" ]; then
             complete_browser_recovery_flow "$response" || return 1
             return 0
+        fi
+        if [ "$reauth_method" = "recovery_code" ]; then
+            if [ "$recovery_code_status" = "missing" ] && [ -z "${EXISTING_RECOVERY_CODE:-}" ]; then
+                prompt_for_recovery_code "$UX_RECOVERY_MISSING_LOCAL_STATE"
+            else
+                prompt_for_recovery_code "${detail:-$UX_RECOVERY_MISSING_LOCAL_STATE}"
+            fi
+            continue
         fi
         if [ -n "$REFERRAL_CODE" ] && [ -z "$INVITE_CODE" ] && [ -n "$detail" ] \
             && printf '%s' "$detail" | grep -Eqi 'referral|invite_code'; then
@@ -3836,9 +3845,12 @@ self_register() {
             prompt_for_invite_code "${UX_PLATFORM_NEEDS_INVITE}: ${detail}"
             continue
         fi
-        if [ -n "$detail" ] && printf '%s' "$detail" | grep -qi 'recovery_code' \
-            && [ -z "${EXISTING_RECOVERY_CODE:-}" ]; then
-            prompt_for_recovery_code "$UX_RECOVERY_MISSING_LOCAL_STATE"
+        if [ -n "$detail" ] && printf '%s' "$detail" | grep -qi 'recovery_code'; then
+            if [ -n "${EXISTING_RECOVERY_CODE:-}" ]; then
+                prompt_for_recovery_code "${detail}"
+            else
+                prompt_for_recovery_code "$UX_RECOVERY_MISSING_LOCAL_STATE"
+            fi
             continue
         fi
 

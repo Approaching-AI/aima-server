@@ -1045,6 +1045,54 @@ async def test_cli_self_register_sends_hardware_id_candidates(
     assert captured["invite_code"] == "invite-demo"
 
 
+@pytest.mark.asyncio
+async def test_cli_reprompts_when_saved_recovery_code_is_invalid(tmp_path: Path) -> None:
+    settings = build_settings(tmp_path / "test.db")
+
+    async with platform_client(settings) as (client, _):
+        transcript = io.StringIO()
+        session = build_session(
+            client=client,
+            tmp_path=tmp_path,
+            invite_code="",
+            transcript=transcript,
+            answers=["fresh-recovery-code"],
+        )
+        await session.ensure_manifest()
+
+        attempts: list[dict[str, object]] = []
+
+        async def fake_self_register(payload: dict[str, object]) -> dict[str, object]:
+            attempts.append(dict(payload))
+            if len(attempts) == 1:
+                raise AIMAApiError(
+                    403,
+                    "provided recovery_code is invalid for existing device credentials",
+                    payload={
+                        "detail": "provided recovery_code is invalid for existing device credentials",
+                        "reauth_method": "recovery_code",
+                        "recovery_code_status": "invalid",
+                        "device_id": "dev_cli_test",
+                    },
+                )
+            return {
+                "device_id": "dev_cli_test",
+                "token": "tok_cli_test",
+                "recovery_code": "fresh-recovery-code",
+                "poll_interval_seconds": 5,
+                "display_language": "en_us",
+            }
+
+        session.api.self_register = fake_self_register  # type: ignore[method-assign]
+        state = await session._self_register_loop(recovery_code="stale-recovery-code")
+
+    assert state.device_id == "dev_cli_test"
+    assert len(attempts) == 2
+    assert attempts[0]["recovery_code"] == "stale-recovery-code"
+    assert attempts[1]["recovery_code"] == "fresh-recovery-code"
+    assert "provided recovery_code is invalid for existing device credentials" in transcript.getvalue()
+
+
 # ---------------------------------------------------------------------------
 # Language preference tests
 # ---------------------------------------------------------------------------

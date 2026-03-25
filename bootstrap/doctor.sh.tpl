@@ -575,12 +575,20 @@ EOJSON
             complete_browser_recovery_flow "$HTTP_BODY"
             return $?
         fi
+        if [ "$_reauth_method" = "recovery_code" ]; then
+            prompt_for_recovery_code
+            case $? in
+                0) continue ;;
+                2) return 2 ;;
+                *) return 1 ;;
+            esac
+        fi
         if [ "$HTTP_STATUS" = "429" ] || printf '%s' "${_detail:-}" | grep -Eqi 'openclaw plugin invite quota exhausted|wait for replenishment'; then
             LAST_REGISTRATION_FAILURE_SUMMARY="$REGISTRATION_RATE_LIMIT_SUMMARY"
             emit_message "$REGISTRATION_RATE_LIMIT_SUMMARY" "warn"
             return 1
         fi
-        if printf '%s' "${_detail:-}" | grep -qi 'recovery_code' && [ -z "$RECOVERY_CODE" ]; then
+        if printf '%s' "${_detail:-}" | grep -qi 'recovery_code'; then
             prompt_for_recovery_code
             case $? in
                 0) continue ;;

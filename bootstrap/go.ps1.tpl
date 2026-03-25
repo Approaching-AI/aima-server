@@ -2889,22 +2889,43 @@ function Register-DeviceSelfService {
                 $sc = Get-HttpStatusCode $_
                 $detail = Get-ErrorDetail $_
                 $payload = Get-ErrorPayload $_
+                $reauthMethod = if ($payload) { [string]$payload.reauth_method } else { "" }
+                $recoveryCodeStatus = if ($payload) { [string]$payload.recovery_code_status } else { "" }
                 if (-not $script:InviteCode -and $ReferralCode -and $detail -and $detail -match '(?i)(referral|invite_code)') {
                     Prompt-InviteCode -Reason "$script:UxReferralNeedsCode`n  $detail"
                     $needsFreshInviteCode = $true
                     break
                 }
-                if ($sc -eq 409 -and $payload -and [string]$payload.reauth_method -eq "browser_confirmation") {
+                if ($sc -eq 409 -and $payload -and $reauthMethod -eq "browser_confirmation") {
                     if (Start-BrowserRecoveryFlow -Payload $payload) {
                         return
                     }
                     throw
                 }
+                if ($reauthMethod -eq "recovery_code") {
+                    $promptReason = if ($recoveryCodeStatus -eq "missing" -and -not $script:RecoveryCode) {
+                        $script:UxRecoveryMissingLocalState
+                    } elseif ($detail) {
+                        $detail
+                    } else {
+                        $script:UxRecoveryMissingLocalState
+                    }
+                    Prompt-RecoveryCode -Reason $promptReason
+                    $needsFreshInviteCode = $true
+                    break
+                }
                 if ($sc -eq 409) {
                     throw
                 }
-                if ($detail -and $detail -match '(?i)recovery_code' -and -not $script:RecoveryCode) {
-                    Prompt-RecoveryCode -Reason $detail
+                if ($detail -and $detail -match '(?i)recovery_code') {
+                    $promptReason = if (-not $script:RecoveryCode) {
+                        $script:UxRecoveryMissingLocalState
+                    } elseif ($detail) {
+                        $detail
+                    } else {
+                        $script:UxRecoveryMissingLocalState
+                    }
+                    Prompt-RecoveryCode -Reason $promptReason
                     $needsFreshInviteCode = $true
                     break
                 }

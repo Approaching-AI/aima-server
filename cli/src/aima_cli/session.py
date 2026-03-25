@@ -225,21 +225,42 @@ class AttachedDeviceSession:
             try:
                 response = await self.api.self_register(payload)
             except AIMAApiError as exc:
+                payload_data = exc.payload if isinstance(exc.payload, dict) else {}
                 if (
                     exc.status_code == 409
-                    and isinstance(exc.payload, dict)
-                    and exc.payload.get("reauth_method") == "browser_confirmation"
+                    and payload_data.get("reauth_method") == "browser_confirmation"
                 ):
-                    state = await self._complete_browser_recovery_flow(exc.payload)
+                    state = await self._complete_browser_recovery_flow(payload_data)
                     self.poll_interval_seconds = state.poll_interval_seconds
                     self.state_store.save(state)
                     return state
                 detail = exc.detail
+                if payload_data.get("reauth_method") == "recovery_code":
+                    assert self.manifest is not None
+                    prompt_reason = detail
+                    if not current_recovery_code:
+                        prompt_reason = self.manifest.text_localized(
+                            "onboarding",
+                            "recovery_missing_local_state",
+                            self._lang,
+                            "This device was previously registered but no local recovery code was found.",
+                        )
+                    current_recovery_code = await self._prompt_recovery_code(prompt_reason)
+                    continue
                 if ("invite_code" in detail or "worker_enrollment_code" in detail or "referral" in detail) and not invite_code:
                     invite_code = await self._prompt_invite_code(detail)
                     continue
-                if "recovery_code" in detail and not current_recovery_code:
-                    current_recovery_code = await self._prompt_recovery_code(detail)
+                if "recovery_code" in detail:
+                    assert self.manifest is not None
+                    prompt_reason = detail
+                    if not current_recovery_code:
+                        prompt_reason = self.manifest.text_localized(
+                            "onboarding",
+                            "recovery_missing_local_state",
+                            self._lang,
+                            "This device was previously registered but no local recovery code was found.",
+                        )
+                    current_recovery_code = await self._prompt_recovery_code(prompt_reason)
                     continue
                 raise
 
