@@ -409,16 +409,16 @@ $script:UxFeedbackSuggestionOption = Get-UxText -Path "blocks.feedback_menu.opti
 $script:UxFeedbackGoBackOption = Get-UxText -Path "blocks.feedback_menu.options.2.label.text" -Fallback "Go back / 返回"
 $script:UxFeedbackDescribePrompt = Get-UxText -Path "blocks.feedback_menu.prompt.text" -Fallback "Describe the issue (press Enter to skip) / 问题描述（直接回车跳过）:"
 $script:UxPostTaskFeedbackPrompt = Get-UxText -Path "blocks.feedback_menu.footer.text" -Fallback "[f] Report a problem / 反馈问题  [s] Share a suggestion / 提建议  [Enter] Continue / 继续"
-$script:UxTaskMenuReadyTitle = Get-UxText -Path "blocks.task_menu.title.text" -Fallback "AIMA is ready. Waiting for tasks... / 准备就绪，等待指令"
-$script:UxTaskMenuSubtitle = Get-UxText -Path "blocks.task_menu.subtitle.text" -Fallback "Choose 1 / 2, or type your request directly. AIMA may ask one follow-up when it helps clarify the task. / 选 1 / 2，或直接输入你的需求。必要时 AIMA 会补问一句再提交任务。"
-$script:UxTaskMenuPrompt = Get-UxText -Path "blocks.task_menu.prompt.text" -Fallback "Enter 1 / 2, or type your request. Press 0 for feedback. / 请输入 1 / 2，或直接输入需求。按 0 可反馈问题。"
+$script:UxTaskMenuReadyTitle = Get-UxText -Path "blocks.task_menu.title.text" -Fallback "What would you like me to help you do? / 请问你想让我帮你完成什么任务？"
+$script:UxTaskMenuSubtitle = Get-UxText -Path "blocks.task_menu.subtitle.text" -Fallback "Describe the goal in one sentence. / 直接描述你的目标即可。"
+$script:UxTaskMenuPrompt = Get-UxText -Path "blocks.task_menu.prompt.text" -Fallback "Type your task below: / 请输入任务："
 $script:UxTaskMenuDisconnect = Get-UxText -Path "blocks.task_menu.context.disconnect_option_label.text" -Fallback "Disconnect device / 断开设备连接"
 $script:UxTaskMenuFeedback = Get-UxText -Path "blocks.task_menu.options.2.label.text" -Fallback "Submit feedback or report a bug / 反馈问题或提建议"
 $script:UxTaskMenuAction1 = Get-UxText -Path "blocks.task_menu.options.0.label.text" -Fallback "Install open-source software (Dify, OpenClaw, ComfyUI...) / 安装开源软件（Dify、OpenClaw、ComfyUI…）"
 $script:UxTaskMenuAction2 = Get-UxText -Path "blocks.task_menu.options.1.label.text" -Fallback "Check or repair installed software / 检查或修复已安装的软件"
 $script:UxTaskMenuSecretWarning = Get-UxText -Path "blocks.task_menu.context.secret_warning.text" -Fallback "Do not paste passwords / API keys / tokens directly. Describe where they are stored instead. / 不要直接粘贴密码 / API Key / Token 原文；只描述存放位置即可。"
 $script:UxTaskMenuFreeformHint = Get-UxText -Path "blocks.task_menu.context.freeform_hint.text" -Fallback "Examples: / 例如："
-$script:UxTaskMenuExample1 = Get-UxText -Path "blocks.task_menu.context.freeform_examples.0.text" -Fallback "Install Dify and prefer a Docker deployment. / 装 dify，希望用 docker 方式安装"
+$script:UxTaskMenuExample1 = Get-UxText -Path "blocks.task_menu.context.freeform_examples.0.text" -Fallback "Install OpenClaw, connect an LLM, and set up Feishu. / 帮我安装openclaw，连好大模型以及飞书"
 $script:UxTaskMenuExample2 = Get-UxText -Path "blocks.task_menu.context.freeform_examples.1.text" -Fallback "Repair OpenClaw; Feishu is no longer receiving messages. / 修一下 openclaw，飞书收不到消息了"
 $script:UxTaskMenuExample3 = Get-UxText -Path "blocks.task_menu.context.freeform_examples.2.text" -Fallback "Check Python version and upgrade to 3.12 if it is below 3.11. / 检查 python 版本，低于 3.11 就升级到 3.12"
 $script:UxTaskMenuSubmitHint = Get-UxText -Path "blocks.task_menu.footer.text" -Fallback "[Enter] Submit / 提交需求   [Ctrl+D] Disconnect / 断开设备   [Ctrl+C] Exit UI / 退出界面"
@@ -484,16 +484,16 @@ function Reload-UxStrings {
     $script:UxFeedbackGoBackOption = Get-UxTextLang -Path "blocks.feedback_menu.options.2.label" -Fallback "Go back / 返回"
     $script:UxFeedbackDescribePrompt = Get-UxTextLang -Path "blocks.feedback_menu.prompt" -Fallback "Describe the issue (press Enter to skip) / 问题描述（直接回车跳过）:"
     $script:UxPostTaskFeedbackPrompt = Get-UxTextLang -Path "blocks.feedback_menu.footer" -Fallback "[f] Report a problem / 反馈问题  [s] Share a suggestion / 提建议  [Enter] Continue / 继续"
-    $script:UxTaskMenuReadyTitle = Get-UxTextLang -Path "blocks.task_menu.title" -Fallback "AIMA is ready. Waiting for tasks... / 准备就绪，等待指令"
-    $script:UxTaskMenuSubtitle = Get-UxTextLang -Path "blocks.task_menu.subtitle" -Fallback "Choose 1 / 2, or type your request directly. AIMA may ask one follow-up when it helps clarify the task. / 选 1 / 2，或直接输入你的需求。必要时 AIMA 会补问一句再提交任务。"
-    $script:UxTaskMenuPrompt = Get-UxTextLang -Path "blocks.task_menu.prompt" -Fallback "Enter 1 / 2, or type your request. Press 0 for feedback. / 请输入 1 / 2，或直接输入需求。按 0 可反馈问题。"
+    $script:UxTaskMenuReadyTitle = Get-UxTextLang -Path "blocks.task_menu.title" -Fallback "What would you like me to help you do? / 请问你想让我帮你完成什么任务？"
+    $script:UxTaskMenuSubtitle = Get-UxTextLang -Path "blocks.task_menu.subtitle" -Fallback "Describe the goal in one sentence. / 直接描述你的目标即可。"
+    $script:UxTaskMenuPrompt = Get-UxTextLang -Path "blocks.task_menu.prompt" -Fallback "Type your task below: / 请输入任务："
     $script:UxTaskMenuDisconnect = Get-UxTextLang -Path "blocks.task_menu.context.disconnect_option_label" -Fallback "Disconnect device / 断开设备连接"
     $script:UxTaskMenuFeedback = Get-UxTextLang -Path "blocks.task_menu.options.2.label" -Fallback "Submit feedback or report a bug / 反馈问题或提建议"
     $script:UxTaskMenuAction1 = Get-UxTextLang -Path "blocks.task_menu.options.0.label" -Fallback "Install open-source software (Dify, OpenClaw, ComfyUI...) / 安装开源软件（Dify、OpenClaw、ComfyUI…）"
     $script:UxTaskMenuAction2 = Get-UxTextLang -Path "blocks.task_menu.options.1.label" -Fallback "Check or repair installed software / 检查或修复已安装的软件"
     $script:UxTaskMenuSecretWarning = Get-UxTextLang -Path "blocks.task_menu.context.secret_warning" -Fallback "Do not paste passwords / API keys / tokens directly. Describe where they are stored instead. / 不要直接粘贴密码 / API Key / Token 原文；只描述存放位置即可。"
     $script:UxTaskMenuFreeformHint = Get-UxTextLang -Path "blocks.task_menu.context.freeform_hint" -Fallback "Examples: / 例如："
-    $script:UxTaskMenuExample1 = Get-UxTextLang -Path "blocks.task_menu.context.freeform_examples.0" -Fallback "Install Dify and prefer a Docker deployment. / 装 dify，希望用 docker 方式安装"
+    $script:UxTaskMenuExample1 = Get-UxTextLang -Path "blocks.task_menu.context.freeform_examples.0" -Fallback "Install OpenClaw, connect an LLM, and set up Feishu. / 帮我安装openclaw，连好大模型以及飞书"
     $script:UxTaskMenuExample2 = Get-UxTextLang -Path "blocks.task_menu.context.freeform_examples.1" -Fallback "Repair OpenClaw; Feishu is no longer receiving messages. / 修一下 openclaw，飞书收不到消息了"
     $script:UxTaskMenuExample3 = Get-UxTextLang -Path "blocks.task_menu.context.freeform_examples.2" -Fallback "Check Python version and upgrade to 3.12 if it is below 3.11. / 检查 python 版本，低于 3.11 就升级到 3.12"
     $script:UxTaskMenuSubmitHint = Get-UxTextLang -Path "blocks.task_menu.footer" -Fallback "[Enter] Submit / 提交需求   [Ctrl+D] Disconnect / 断开设备   [Ctrl+C] Exit UI / 退出界面"
@@ -1875,6 +1875,7 @@ function Get-PendingHotkeyAction {
 function Read-ConsoleLine {
     param(
         [string]$Prompt = "  > ",
+        [string]$PromptColor = "",
         [bool]$AllowCancelHotkey = $false,
         [bool]$AllowDisconnectHotkey = $false,
         [bool]$AllowBindHotkey = $false
@@ -1888,7 +1889,11 @@ function Read-ConsoleLine {
     }
 
     $builder = New-Object System.Text.StringBuilder
-    Write-Host $Prompt -NoNewline
+    if ($PromptColor) {
+        Write-Host $Prompt -NoNewline -ForegroundColor $PromptColor
+    } else {
+        Write-Host $Prompt -NoNewline
+    }
     while ($true) {
         $key = [Console]::ReadKey($true)
         if (($key.Modifiers -band [ConsoleModifiers]::Control) -and $AllowCancelHotkey -and $key.Key -eq [ConsoleKey]::K) {
@@ -3145,23 +3150,16 @@ function Show-TaskMenu {
     while ($true) {
         # Show menu
         Refresh-WindowTitle
-        Write-Host ""
-        Write-Host "  $script:UxTaskMenuReadyTitle" -ForegroundColor Green
-        Write-Host "    $script:UxTaskMenuSubtitle" -ForegroundColor DarkGray
-        Write-Host ""
-        Write-Host "    1  $script:UxTaskMenuAction1"
-        Write-Host "    2  $script:UxTaskMenuAction2"
+        $submitHint = $script:UxTaskMenuSubmitHint
         if (-not $script:IsBound) {
-            Write-Host "    $($script:BindConsoleHotkeyLabel)  $(Get-LangText '绑定到控制台' 'Bind to console')"
+            $submitHint = "$submitHint   $($script:BindConsoleHotkeyLabel)  $(Get-LangText '绑定控制台' 'Bind console')"
         }
-        Write-Host "    $script:DeviceDisconnectHotkeyLabel  $script:UxTaskMenuDisconnect"
         Write-Host ""
-        Write-Host "    0  $script:UxTaskMenuFeedback" -ForegroundColor DarkGray
-        Write-Host ""
-        if ($script:UxTaskMenuSecretWarning) {
-            Write-Host "    $script:UxTaskMenuSecretWarning" -ForegroundColor DarkGray
-            Write-Host ""
+        Write-Host "  $script:UxTaskMenuReadyTitle"
+        if ($script:UxTaskMenuSubtitle) {
+            Write-Host "    $script:UxTaskMenuSubtitle" -ForegroundColor DarkGray
         }
+        Write-Host ""
         if ($script:UxTaskMenuFreeformHint) {
             Write-Host "    $script:UxTaskMenuFreeformHint" -ForegroundColor DarkGray
         }
@@ -3171,13 +3169,13 @@ function Show-TaskMenu {
             }
         }
         Write-Host ""
-        Write-Host "    $script:UxTaskMenuSubmitHint" -ForegroundColor DarkGray
+        Write-Host "    $submitHint" -ForegroundColor DarkGray
         Write-Host ""
         Write-Host "  $script:UxTaskMenuPrompt" -ForegroundColor Cyan
 
         if ([System.Console]::IsInputRedirected) { return }
 
-        $menuInput = Read-ConsoleLine -Prompt "  > " -AllowDisconnectHotkey $true -AllowBindHotkey $true
+        $menuInput = Read-ConsoleLine -Prompt "  > " -PromptColor "Cyan" -AllowDisconnectHotkey $true -AllowBindHotkey $true
         switch ($menuInput.action) {
             "exit_ui" {
                 $script:UiExitRequested = $true
@@ -3258,7 +3256,7 @@ function Show-TaskMenu {
             "" { continue }
             default {
                 if ($userRequest -match '^\d+$') {
-                    Write-Host "  $(Get-UxTextLang -Path 'blocks.task_menu.context.invalid_selection_notice' -Fallback '请选择 1 / 2，按 0 反馈问题，直接输入需求，或使用 Ctrl+B / Ctrl+D。')" -ForegroundColor Yellow
+                    Write-Host "  $(Get-UxTextLang -Path 'blocks.task_menu.context.invalid_selection_notice' -Fallback '请直接输入你的需求，按 0 可反馈问题，或使用 Ctrl+B / Ctrl+D。')" -ForegroundColor Yellow
                     continue
                 }
                 $taskMode = "freeform"

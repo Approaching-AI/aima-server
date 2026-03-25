@@ -215,13 +215,13 @@ async def test_cli_renders_task_menu_from_manifest_blocks(tmp_path: Path) -> Non
         assert choice.experience_search["target_hint"] == "dify"
         assert "dify，希望用 docker 方式安装" in choice.description
         output = transcript.getvalue()
-        assert "AIMA is ready. Waiting for tasks..." in output
-        assert "type your request directly" in output
-        assert "Install open-source software" in output
-        assert "不要直接粘贴密码 / API Key / Token 原文" in output
+        assert "What would you like me to help you do?" in output
+        assert "Describe the goal in one sentence." in output
+        assert "Examples:" in output
         assert "想装什么软件？有什么补充信息" in output
         assert "检查 python 版本，低于 3.11 就升级到 3.12" in output
-        assert "0. Submit feedback or report a bug" in output
+        assert "Install open-source software" not in output
+        assert "0. Submit feedback or report a bug" not in output
         assert "3. " not in output
 
 

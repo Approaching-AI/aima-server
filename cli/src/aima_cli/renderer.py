@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 from typing import TextIO
 
@@ -19,6 +20,15 @@ class TerminalRenderer:
 
     def _l(self, localized_text) -> str:
         return localized_text.localized(self.lang)
+
+    def _supports_ansi(self) -> bool:
+        isatty = getattr(self.stream, "isatty", None)
+        return bool(callable(isatty) and isatty() and not os.environ.get("NO_COLOR"))
+
+    def _style(self, text: str, *codes: str) -> str:
+        if not text or not self._supports_ansi():
+            return text
+        return f"\033[{';'.join(codes)}m{text}\033[0m"
 
     def line(self, text: str = "") -> None:
         self.stream.write(text + "\n")
@@ -96,6 +106,35 @@ class TerminalRenderer:
             extra_lines=[f"d. {disconnect_label}"],
             footer_override=footer,
         )
+
+    def render_task_intake(
+        self,
+        block: ManifestBlock,
+        *,
+        example_lines: list[str],
+        footer: str = "",
+    ) -> None:
+        self.line()
+        if block.title.text:
+            self.line(self._style(self._l(block.title), "1"))
+        if block.subtitle.text:
+            self.line(self._style(self._l(block.subtitle), "2"))
+        if example_lines:
+            self.line()
+            hint = block.context_text_localized("freeform_hint", self.lang, "")
+            if hint:
+                self.line(self._style(hint, "2"))
+            for line in example_lines:
+                self.line(self._style(f"- {line}", "2"))
+        if footer:
+            self.line()
+            self.line(self._style(footer, "2"))
+        if block.prompt.text:
+            self.line()
+            self.line(self._style(self._l(block.prompt), "1", "36"))
+
+    def input_cursor(self) -> str:
+        return f"{self._style('>', '1', '36')} "
 
     def render_active_task_resolution(
         self,

@@ -895,32 +895,23 @@ class AttachedDeviceSession:
         block = self.manifest.block("task_menu")
         action_options = self._task_menu_action_options(block)
         feedback_option = self._task_menu_feedback_option(block)
-        disconnect_label = block.context_text_localized("disconnect_option_label", lang, "Disconnect device")
-        option_lines = [
-            f"{index}. {option.label.localized(lang)}"
-            for index, option in enumerate(action_options, start=1)
-        ]
-        extra_lines: list[str] = []
-        if feedback_option is not None:
-            extra_lines.append(f"0. {feedback_option.label.localized(lang)}")
-        secret_warning = block.context_text_localized("secret_warning", lang, "")
-        if secret_warning:
-            extra_lines.extend(["", secret_warning])
-        freeform_hint = block.context_text_localized("freeform_hint", lang, "")
-        if freeform_hint:
-            extra_lines.extend(["", freeform_hint])
+        example_lines: list[str] = []
         for example in list(block.context.get("freeform_examples") or []):
             localized = self._localized_text(example)
             if localized:
-                extra_lines.append(f"- {localized}")
-        extra_lines.extend(["", f"d. {disconnect_label}"])
-        self.renderer.render_menu(
+                example_lines.append(localized)
+        footer = (
+            "[Enter] Submit request   [d] Disconnect   [Ctrl+C] Exit UI"
+            if lang == "en_us"
+            else "[Enter] 提交需求   [d] 断开设备   [Ctrl+C] 退出界面"
+        )
+        self.renderer.render_task_intake(
             block,
-            option_lines=option_lines,
-            extra_lines=extra_lines,
+            example_lines=example_lines,
+            footer=footer,
         )
         try:
-            answer = (await self.input_provider.prompt(f"{block.prompt.localized(lang)}\n> ")).strip()
+            answer = (await self.input_provider.prompt(self.renderer.input_cursor())).strip()
         except InputClosedError:
             return "__detach__"
         if not answer:
@@ -951,7 +942,7 @@ class AttachedDeviceSession:
             block.context_text_localized(
                 "invalid_selection_notice",
                 lang,
-                "Please choose 1 / 2, press 0 for feedback, type your request directly, or use the local bind / disconnect controls.",
+                "Type your request directly, press 0 for feedback, or use the local bind / disconnect controls.",
             )
         )
         return None

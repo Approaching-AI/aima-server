@@ -344,9 +344,9 @@ UX_FEEDBACK_SUGGESTION_OPTION="$(ux_manifest_text "blocks.feedback_menu.options.
 UX_FEEDBACK_GO_BACK="$(ux_manifest_text "blocks.feedback_menu.options.2.label.text" "Go back / 返回")"
 UX_FEEDBACK_DESCRIBE_PROMPT="$(ux_manifest_text "blocks.feedback_menu.prompt.text" "Describe the issue (press Enter to skip) / 问题描述（直接回车跳过）:")"
 UX_POST_TASK_FEEDBACK_PROMPT="$(ux_manifest_text "blocks.feedback_menu.footer.text" "[f] Report a problem / 反馈问题  [s] Share a suggestion / 提建议  [Enter] Continue / 继续")"
-UX_TASK_MENU_READY_TITLE="$(ux_manifest_text "blocks.task_menu.title.text" "AIMA is ready. Waiting for tasks... / 准备就绪，等待指令")"
-UX_TASK_MENU_SUBTITLE="$(ux_manifest_text "blocks.task_menu.subtitle.text" "Choose 1 / 2, or type your request directly. AIMA may ask one follow-up when it helps clarify the task. / 选 1 / 2，或直接输入你的需求。必要时 AIMA 会补问一句再提交任务。")"
-UX_TASK_MENU_PROMPT="$(ux_manifest_text "blocks.task_menu.prompt.text" "Enter 1 / 2, or type your request. Press 0 for feedback. / 请输入 1 / 2，或直接输入需求。按 0 可反馈问题。")"
+UX_TASK_MENU_READY_TITLE="$(ux_manifest_text "blocks.task_menu.title.text" "What would you like me to help you do? / 请问你想让我帮你完成什么任务？")"
+UX_TASK_MENU_SUBTITLE="$(ux_manifest_text "blocks.task_menu.subtitle.text" "Describe the goal in one sentence. / 直接描述你的目标即可。")"
+UX_TASK_MENU_PROMPT="$(ux_manifest_text "blocks.task_menu.prompt.text" "Type your task below: / 请输入任务：")"
 UX_TASK_MENU_SUBMIT_HINT="$(ux_manifest_text "blocks.task_menu.footer.text" "[Enter] Submit / 提交需求   [Ctrl+D] Disconnect / 断开设备   [Ctrl+C] Exit UI / 退出界面")"
 UX_TASK_MENU_DISCONNECT="$(ux_manifest_text "blocks.task_menu.context.disconnect_option_label.text" "Disconnect device / 断开设备连接")"
 UX_TASK_MENU_FEEDBACK="$(ux_manifest_text "blocks.task_menu.options.2.label.text" "Submit feedback or report a bug / 反馈问题或提建议")"
@@ -354,7 +354,7 @@ UX_TASK_MENU_ACTION_1="$(ux_manifest_text "blocks.task_menu.options.0.label.text
 UX_TASK_MENU_ACTION_2="$(ux_manifest_text "blocks.task_menu.options.1.label.text" "Check or repair installed software / 检查或修复已安装的软件")"
 UX_TASK_MENU_SECRET_WARNING="$(ux_manifest_text "blocks.task_menu.context.secret_warning.text" "Do not paste passwords / API keys / tokens directly. Describe where they are stored instead. / 不要直接粘贴密码 / API Key / Token 原文；只描述存放位置即可。")"
 UX_TASK_MENU_FREEFORM_HINT="$(ux_manifest_text "blocks.task_menu.context.freeform_hint.text" "Examples: / 例如：")"
-UX_TASK_MENU_EXAMPLE_1="$(ux_manifest_text "blocks.task_menu.context.freeform_examples.0.text" "Install Dify and prefer a Docker deployment. / 装 dify，希望用 docker 方式安装")"
+UX_TASK_MENU_EXAMPLE_1="$(ux_manifest_text "blocks.task_menu.context.freeform_examples.0.text" "Install OpenClaw, connect an LLM, and set up Feishu. / 帮我安装openclaw，连好大模型以及飞书")"
 UX_TASK_MENU_EXAMPLE_2="$(ux_manifest_text "blocks.task_menu.context.freeform_examples.1.text" "Repair OpenClaw; Feishu is no longer receiving messages. / 修一下 openclaw，飞书收不到消息了")"
 UX_TASK_MENU_EXAMPLE_3="$(ux_manifest_text "blocks.task_menu.context.freeform_examples.2.text" "Check Python version and upgrade to 3.12 if it is below 3.11. / 检查 python 版本，低于 3.11 就升级到 3.12")"
 UX_TASK_MENU_RESUME_HOTKEY_HINT="$(ux_manifest_text "blocks.task_menu.context.resume_hotkey_hint.text" "快捷键 Hotkey: Ctrl+K 取消当前任务, Ctrl+D 断开设备, Ctrl+C 退出界面")"
@@ -435,9 +435,9 @@ reload_ux_strings() {
     UX_FEEDBACK_GO_BACK="$(ux_manifest_text_lang "blocks.feedback_menu.options.2.label" "Go back / 返回")"
     UX_FEEDBACK_DESCRIBE_PROMPT="$(ux_manifest_text_lang "blocks.feedback_menu.prompt" "Describe the issue (press Enter to skip) / 问题描述（直接回车跳过）:")"
     UX_POST_TASK_FEEDBACK_PROMPT="$(ux_manifest_text_lang "blocks.feedback_menu.footer" "[f] Report a problem / 反馈问题  [s] Share a suggestion / 提建议  [Enter] Continue / 继续")"
-    UX_TASK_MENU_READY_TITLE="$(ux_manifest_text_lang "blocks.task_menu.title" "AIMA is ready. Waiting for tasks... / 准备就绪，等待指令")"
-    UX_TASK_MENU_SUBTITLE="$(ux_manifest_text_lang "blocks.task_menu.subtitle" "Choose 1 / 2, or type your request directly. AIMA may ask one follow-up when it helps clarify the task. / 选 1 / 2，或直接输入你的需求。必要时 AIMA 会补问一句再提交任务。")"
-    UX_TASK_MENU_PROMPT="$(ux_manifest_text_lang "blocks.task_menu.prompt" "Enter 1 / 2, or type your request. Press 0 for feedback. / 请输入 1 / 2，或直接输入需求。按 0 可反馈问题。")"
+    UX_TASK_MENU_READY_TITLE="$(ux_manifest_text_lang "blocks.task_menu.title" "What would you like me to help you do? / 请问你想让我帮你完成什么任务？")"
+    UX_TASK_MENU_SUBTITLE="$(ux_manifest_text_lang "blocks.task_menu.subtitle" "Describe the goal in one sentence. / 直接描述你的目标即可。")"
+    UX_TASK_MENU_PROMPT="$(ux_manifest_text_lang "blocks.task_menu.prompt" "Type your task below: / 请输入任务：")"
     UX_TASK_MENU_SUBMIT_HINT="$(ux_manifest_text_lang "blocks.task_menu.footer" "[Enter] Submit / 提交需求   [Ctrl+D] Disconnect / 断开设备   [Ctrl+C] Exit UI / 退出界面")"
     UX_TASK_MENU_DISCONNECT="$(ux_manifest_text_lang "blocks.task_menu.context.disconnect_option_label" "Disconnect device / 断开设备连接")"
     UX_TASK_MENU_FEEDBACK="$(ux_manifest_text_lang "blocks.task_menu.options.2.label" "Submit feedback or report a bug / 反馈问题或提建议")"
@@ -445,7 +445,7 @@ reload_ux_strings() {
     UX_TASK_MENU_ACTION_2="$(ux_manifest_text_lang "blocks.task_menu.options.1.label" "Check or repair installed software / 检查或修复已安装的软件")"
     UX_TASK_MENU_SECRET_WARNING="$(ux_manifest_text_lang "blocks.task_menu.context.secret_warning" "Do not paste passwords / API keys / tokens directly. Describe where they are stored instead. / 不要直接粘贴密码 / API Key / Token 原文；只描述存放位置即可。")"
     UX_TASK_MENU_FREEFORM_HINT="$(ux_manifest_text_lang "blocks.task_menu.context.freeform_hint" "Examples: / 例如：")"
-    UX_TASK_MENU_EXAMPLE_1="$(ux_manifest_text_lang "blocks.task_menu.context.freeform_examples.0" "Install Dify and prefer a Docker deployment. / 装 dify，希望用 docker 方式安装")"
+    UX_TASK_MENU_EXAMPLE_1="$(ux_manifest_text_lang "blocks.task_menu.context.freeform_examples.0" "Install OpenClaw, connect an LLM, and set up Feishu. / 帮我安装openclaw，连好大模型以及飞书")"
     UX_TASK_MENU_EXAMPLE_2="$(ux_manifest_text_lang "blocks.task_menu.context.freeform_examples.1" "Repair OpenClaw; Feishu is no longer receiving messages. / 修一下 openclaw，飞书收不到消息了")"
     UX_TASK_MENU_EXAMPLE_3="$(ux_manifest_text_lang "blocks.task_menu.context.freeform_examples.2" "Check Python version and upgrade to 3.12 if it is below 3.11. / 检查 python 版本，低于 3.11 就升级到 3.12")"
     UX_TASK_MENU_RESUME_HOTKEY_HINT="$(ux_manifest_text_lang "blocks.task_menu.context.resume_hotkey_hint" "快捷键 Hotkey: Ctrl+K 取消当前任务, Ctrl+D 断开设备, Ctrl+C 退出界面")"
@@ -2711,23 +2711,16 @@ ask_and_create_task() {
     while true; do
         # No active task — show menu
         refresh_window_title
-        printf '\n'
-        printf '  \033[1;32m●\033[0m \033[1m%s\033[0m\n' "$UX_TASK_MENU_READY_TITLE"
-        printf '    \033[2m%s\033[0m\n' "$UX_TASK_MENU_SUBTITLE"
-        printf '\n'
-        printf '    \033[1m1\033[0m  %s\n' "$UX_TASK_MENU_ACTION_1"
-        printf '    \033[1m2\033[0m  %s\n' "$UX_TASK_MENU_ACTION_2"
+        local submit_hint="$UX_TASK_MENU_SUBMIT_HINT"
         if [ "$IS_BOUND" -eq 0 ]; then
-            printf '    \033[1;35m%s\033[0m  %s\n' "$BIND_CONSOLE_HOTKEY_LABEL" "$(lang_text "绑定到控制台" "Bind to console")"
+            submit_hint="${submit_hint}   ${BIND_CONSOLE_HOTKEY_LABEL} $(lang_text "绑定控制台" "Bind console")"
         fi
-        printf '    \033[1m%s\033[0m  %s\n' "$DEVICE_DISCONNECT_HOTKEY_LABEL" "$UX_TASK_MENU_DISCONNECT"
         printf '\n'
-        printf '    \033[1m0\033[0m  \033[2m%s\033[0m\n' "$UX_TASK_MENU_FEEDBACK"
-        printf '\n'
-        if [ -n "${UX_TASK_MENU_SECRET_WARNING:-}" ]; then
-            printf '    \033[2m%s\033[0m\n' "${UX_TASK_MENU_SECRET_WARNING:-}"
-            printf '\n'
+        printf '  \033[1m%s\033[0m\n' "$UX_TASK_MENU_READY_TITLE"
+        if [ -n "${UX_TASK_MENU_SUBTITLE:-}" ]; then
+            printf '    \033[2m%s\033[0m\n' "$UX_TASK_MENU_SUBTITLE"
         fi
+        printf '\n'
         if [ -n "${UX_TASK_MENU_FREEFORM_HINT:-}" ]; then
             printf '    \033[2m%s\033[0m\n' "${UX_TASK_MENU_FREEFORM_HINT:-}"
         fi
@@ -2737,10 +2730,11 @@ ask_and_create_task() {
             fi
         done
         printf '\n'
-        printf '    \033[2m%s\033[0m\n' "$UX_TASK_MENU_SUBMIT_HINT"
+        printf '    \033[2m%s\033[0m\n' "$submit_hint"
         printf '\n'
-        printf '  \033[36m%s\033[0m\n' "$UX_TASK_MENU_PROMPT"
+        printf '  \033[1;36m%s\033[0m\n' "$UX_TASK_MENU_PROMPT"
         local user_request="" guided_status=0 task_description="" task_mode="" task_user_request="" task_type_hint="" software_hint="" problem_hint="" target_hint="" error_message_hint=""
+        printf '  \033[1;36m>\033[0m '
         read_tty_with_hotkeys 1 1 || true
         case "$READ_TTY_ACTION" in
             bind)
@@ -2815,7 +2809,7 @@ ask_and_create_task() {
                 ;;
             *)
                 if printf '%s' "$user_request" | grep -Eq '^[0-9]+$'; then
-                    warn "$(ux_manifest_text_lang "blocks.task_menu.context.invalid_selection_notice" "请选择 1 / 2，按 0 反馈问题，直接输入需求，或使用 Ctrl+B / Ctrl+D。")"
+                    warn "$(ux_manifest_text_lang "blocks.task_menu.context.invalid_selection_notice" "请直接输入你的需求，按 0 可反馈问题，或使用 Ctrl+B / Ctrl+D。")"
                     continue
                 fi
                 task_mode="freeform"
