@@ -510,6 +510,7 @@ function Register-OrRefreshDevice {
         $regPayload = @{
             fingerprint = $fingerprint
             hardware_id = $hardwareId
+            hardware_id_candidates = @($hardwareId)
             os_profile  = $osProfile
         }
         if ($script:RecoveryCode) { $regPayload.recovery_code = $script:RecoveryCode }
@@ -548,10 +549,30 @@ function Register-OrRefreshDevice {
         }
 
         $detail = if ($regResult.detail) { [string]$regResult.detail } else { [string]$resp.Body }
-        if (($resp.Status -eq 429) -or ($detail -match "openclaw plugin invite quota exhausted|wait for replenishment")) {
-            $script:LastRegistrationFailureSummary = $script:RegistrationRateLimitSummary
+        $errorCode = if ($regResult.error_code) { [string]$regResult.error_code } else { "" }
+        # Structured invite error_code — clear stale invite and re-prompt
+        if ($errorCode -in @('invite_quota_exhausted', 'invite_expired', 'invite_disabled', 'invite_invalid')) {
+            $invite = $null
             Emit-Message $script:RegistrationRateLimitSummary "warn"
-            return $false
+            $invite = Prompt-InviteCode
+            if ($null -eq $invite) { return $null }
+            if (-not $invite) { $script:LastRegistrationFailureSummary = $script:RegistrationRateLimitSummary; return $false }
+            continue
+        }
+        if ($errorCode -in @('invite_required', 'referral_error')) {
+            $invite = Prompt-InviteCode
+            if ($null -eq $invite) { return $null }
+            if (-not $invite) { return $false }
+            continue
+        }
+        # Legacy fallback: 429 or string match for older servers without error_code
+        if (($resp.Status -eq 429) -or ($detail -match '(?i)(quota exhausted|invite code.*(expired|disabled))')) {
+            $invite = $null
+            Emit-Message $script:RegistrationRateLimitSummary "warn"
+            $invite = Prompt-InviteCode
+            if ($null -eq $invite) { return $null }
+            if (-not $invite) { $script:LastRegistrationFailureSummary = $script:RegistrationRateLimitSummary; return $false }
+            continue
         }
         if ($detail -match "recovery_code") {
             $providedRecovery = Prompt-RecoveryCode

@@ -3817,6 +3817,7 @@ self_register() {
         detail="$(json_str detail "$response")"
         reauth_method="$(json_str reauth_method "$response")"
         recovery_code_status="$(json_str recovery_code_status "$response")"
+        error_code="$(json_str error_code "$response")"
         if [ "$reauth_method" = "browser_confirmation" ]; then
             complete_browser_recovery_flow "$response" || return 1
             return 0
@@ -3829,13 +3830,32 @@ self_register() {
             fi
             continue
         fi
-        if [ -n "$REFERRAL_CODE" ] && [ -z "$INVITE_CODE" ] && [ -n "$detail" ] \
+        # Structured invite error_code — clear stale invite and re-prompt
+        case "$error_code" in
+            invite_quota_exhausted|invite_expired|invite_disabled)
+                INVITE_CODE=""
+                prompt_for_invite_code "$(lang_text '当前邀请码不可用' 'Current invite code is unavailable'): ${detail}"
+                continue
+                ;;
+            invite_invalid)
+                INVITE_CODE=""
+                prompt_for_invite_code "$(lang_text '邀请码无效' 'Invalid invite code')"
+                continue
+                ;;
+            invite_required|referral_error)
+                prompt_for_invite_code "${UX_PLATFORM_NEEDS_INVITE}: ${detail}"
+                continue
+                ;;
+        esac
+        # Legacy fallback: grep detail string for older servers without error_code
+        if [ -n "$REFERRAL_CODE" ] && [ -n "$detail" ] \
             && printf '%s' "$detail" | grep -Eqi 'referral|invite_code'; then
+            INVITE_CODE=""
             prompt_for_invite_code "${UX_REFERRAL_NEEDS_CODE}: ${detail}"
             continue
         fi
-        if [ -n "$detail" ] && printf '%s' "$detail" | grep -Eqi 'invite_code|worker_enrollment_code' \
-            && [ -z "$INVITE_CODE" ] && [ -z "$WORKER_ENROLLMENT_CODE" ]; then
+        if [ -n "$detail" ] && printf '%s' "$detail" | grep -Eqi 'invite_code|worker_enrollment_code|invite code.*exhaust|invite code.*expired|invite code.*disabled'; then
+            INVITE_CODE=""
             prompt_for_invite_code "${UX_PLATFORM_NEEDS_INVITE}: ${detail}"
             continue
         fi

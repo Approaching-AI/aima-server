@@ -542,7 +542,9 @@ EOJSON
 
     while true; do
         _reg_hw=""
+        _reg_hw_candidates=""
         [ -n "$hardware_id" ] && _reg_hw="\"hardware_id\":\"$(json_escape "$hardware_id")\","
+        [ -n "$hardware_id" ] && _reg_hw_candidates="\"hardware_id_candidates\":[\"$(json_escape "$hardware_id")\"],"
         _reg_rc=""
         [ -n "$RECOVERY_CODE" ] && _reg_rc="\"recovery_code\":\"$(json_escape "$RECOVERY_CODE")\","
         _reg_invite=""
@@ -550,7 +552,7 @@ EOJSON
 
         http_request -X POST "${API_BASE_URL}/devices/self-register" \
             -H "Content-Type: application/json" \
-            -d "{${_reg_hw}${_reg_rc}${_reg_invite}\"fingerprint\":\"$(json_escape "$fingerprint")\",\"os_profile\":${os_profile}}"
+            -d "{${_reg_hw}${_reg_hw_candidates}${_reg_rc}${_reg_invite}\"fingerprint\":\"$(json_escape "$fingerprint")\",\"os_profile\":${os_profile}}"
 
         if [ "$HTTP_CURL_EXIT" -ne 0 ] || [ -z "$HTTP_BODY" ]; then
             emit_message "无法连接平台 / Cannot reach platform" "error"
@@ -571,6 +573,7 @@ EOJSON
 
         _detail="$(json_str "detail" "$HTTP_BODY")"
         _reauth_method="$(json_str "reauth_method" "$HTTP_BODY")"
+        _error_code="$(json_str "error_code" "$HTTP_BODY")"
         if [ "$HTTP_STATUS" = "409" ] && [ "$_reauth_method" = "browser_confirmation" ]; then
             complete_browser_recovery_flow "$HTTP_BODY"
             return $?
@@ -583,10 +586,37 @@ EOJSON
                 *) return 1 ;;
             esac
         fi
-        if [ "$HTTP_STATUS" = "429" ] || printf '%s' "${_detail:-}" | grep -Eqi 'openclaw plugin invite quota exhausted|wait for replenishment'; then
-            LAST_REGISTRATION_FAILURE_SUMMARY="$REGISTRATION_RATE_LIMIT_SUMMARY"
+        # Structured invite error_code — clear stale invite and re-prompt
+        case "$_error_code" in
+            invite_quota_exhausted|invite_expired|invite_disabled|invite_invalid)
+                invite_code=""
+                emit_message "$REGISTRATION_RATE_LIMIT_SUMMARY" "warn"
+                prompt_for_invite_code
+                case $? in
+                    0) invite_code="$ANSWER"; continue ;;
+                    2) return 2 ;;
+                    *) LAST_REGISTRATION_FAILURE_SUMMARY="$REGISTRATION_RATE_LIMIT_SUMMARY"; return 1 ;;
+                esac
+                ;;
+            invite_required|referral_error)
+                prompt_for_invite_code
+                case $? in
+                    0) invite_code="$ANSWER"; continue ;;
+                    2) return 2 ;;
+                    *) return 1 ;;
+                esac
+                ;;
+        esac
+        # Legacy fallback: 429 or string match for older servers without error_code
+        if [ "$HTTP_STATUS" = "429" ] || printf '%s' "${_detail:-}" | grep -Eqi 'quota exhausted|invite code.*(expired|disabled)'; then
+            invite_code=""
             emit_message "$REGISTRATION_RATE_LIMIT_SUMMARY" "warn"
-            return 1
+            prompt_for_invite_code
+            case $? in
+                0) invite_code="$ANSWER"; continue ;;
+                2) return 2 ;;
+                *) LAST_REGISTRATION_FAILURE_SUMMARY="$REGISTRATION_RATE_LIMIT_SUMMARY"; return 1 ;;
+            esac
         fi
         if printf '%s' "${_detail:-}" | grep -qi 'recovery_code'; then
             prompt_for_recovery_code

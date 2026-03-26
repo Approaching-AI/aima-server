@@ -2896,7 +2896,28 @@ function Register-DeviceSelfService {
                 $payload = Get-ErrorPayload $_
                 $reauthMethod = if ($payload) { [string]$payload.reauth_method } else { "" }
                 $recoveryCodeStatus = if ($payload) { [string]$payload.recovery_code_status } else { "" }
-                if (-not $script:InviteCode -and $ReferralCode -and $detail -and $detail -match '(?i)(referral|invite_code)') {
+                $errorCode = if ($payload) { [string]$payload.error_code } else { "" }
+                # Structured invite error_code — clear stale invite and re-prompt
+                if ($errorCode -in @('invite_quota_exhausted', 'invite_expired', 'invite_disabled')) {
+                    $script:InviteCode = $null
+                    Prompt-InviteCode -Reason "$(Get-LangText '当前邀请码不可用' 'Current invite code is unavailable'): $detail"
+                    $needsFreshInviteCode = $true
+                    break
+                }
+                if ($errorCode -eq 'invite_invalid') {
+                    $script:InviteCode = $null
+                    Prompt-InviteCode -Reason "$(Get-LangText '邀请码无效' 'Invalid invite code')"
+                    $needsFreshInviteCode = $true
+                    break
+                }
+                if ($errorCode -in @('invite_required', 'referral_error')) {
+                    Prompt-InviteCode -Reason "$script:UxInviteRequired`n  $detail"
+                    $needsFreshInviteCode = $true
+                    break
+                }
+                # Legacy fallback: grep detail string for older servers without error_code
+                if ($detail -and $detail -match '(?i)(referral|invite_code|invite code.*(exhaust|expired|disabled))') {
+                    $script:InviteCode = $null
                     Prompt-InviteCode -Reason "$script:UxReferralNeedsCode`n  $detail"
                     $needsFreshInviteCode = $true
                     break
@@ -2931,11 +2952,6 @@ function Register-DeviceSelfService {
                         $script:UxRecoveryMissingLocalState
                     }
                     Prompt-RecoveryCode -Reason $promptReason
-                    $needsFreshInviteCode = $true
-                    break
-                }
-                if ($sc -eq 403 -and -not $script:RecoveryCode -and -not $script:InviteCode) {
-                    Prompt-RecoveryCode -Reason $(if ($detail) { $detail } else { $script:UxRecoveryMissingLocalState })
                     $needsFreshInviteCode = $true
                     break
                 }
