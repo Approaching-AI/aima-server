@@ -4,12 +4,32 @@
 #        curl -sL https://aima.cloud/go.sh | bash -s -- --token <ACTIVATION_CODE>
 set -euo pipefail
 
+detect_python3_bin() {
+    local path=""
+    path="$(command -v python3 2>/dev/null || true)"
+    [ -n "$path" ] || return 1
+
+    # macOS exposes /usr/bin/python3 even when Command Line Tools are absent.
+    # Executing that shim pops the Xcode installer before /go can even register.
+    if [ "$(uname -s 2>/dev/null || true)" = "Darwin" ] && [ "$path" = "/usr/bin/python3" ]; then
+        xcode-select -p >/dev/null 2>&1 || return 1
+    fi
+
+    printf '%s\n' "$path"
+}
+
+PYTHON3_BIN="$(detect_python3_bin || true)"
+
+has_usable_python3() {
+    [ -n "$PYTHON3_BIN" ]
+}
+
 resolve_login_home() {
     local detected_home=""
 
-    if command -v python3 >/dev/null 2>&1; then
+    if has_usable_python3; then
         detected_home="$(
-            python3 - <<'PY'
+            "$PYTHON3_BIN" - <<'PY'
 import os
 import pwd
 import sys
@@ -68,7 +88,7 @@ INTERACTION_ANSWER_FILE="${RUNTIME_DIR}/interaction-answer.json"
 TASK_COMPLETION_FILE="${RUNTIME_DIR}/task-completion.json"
 DISCONNECT_REQUEST_FILE="${RUNTIME_DIR}/disconnect.request"
 CONNECT_TOKEN=""
-INVITE_CODE=""
+INVITE_CODE=__INVITE_CODE__
 REFERRAL_CODE=__REFERRAL_CODE__
 WORKER_ENROLLMENT_CODE=__WORKER_CODE__
 UTM_SOURCE=__UTM_SOURCE__
@@ -108,6 +128,93 @@ DEVICE_BUDGET_USD=""
 DEVICE_SPENT_USD=""
 UX_MANIFEST_JSON=__UX_MANIFEST_JSON__
 
+# ── Standalone mode bootstrap ────────────────────────────────────
+# When installed via pip/npm/brew, template placeholders remain literal.
+# Detect this and bootstrap configuration at runtime.
+# In server-rendered mode (curl|bash), this block is a no-op.
+_aima_standalone_mode=0
+# Split the placeholder name across two strings so server-side rendering
+# (which globally replaces __BASE_URL__) cannot alter this detection.
+# Bash concatenates the halves at runtime: "__BASE" + "_URL__" = "__BASE_URL__"
+_aima_unfilled="__BASE""_URL__"
+case "$BASE_URL" in
+    *"$_aima_unfilled"*) _aima_standalone_mode=1 ;;
+esac
+
+if [ "$_aima_standalone_mode" -eq 1 ]; then
+    # Priority 1: reuse platform URL from saved state (reconnect)
+    _saved_url=""
+    if [ -f "$STATE_FILE" ]; then
+        _saved_url="$(sed -n 's/^PLATFORM_URL=//p' "$STATE_FILE" | head -1)"
+    fi
+    # Priority 1b: cross-read from Python CLI JSON state
+    if [ -z "$_saved_url" ] && [ -f "${HOME}/.aima-cli/device-state.json" ] && has_usable_python3; then
+        _saved_url="$("$PYTHON3_BIN" -c '
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+    v = d.get("platform_url", "")
+    if v:
+        sys.stdout.write(v)
+except Exception:
+    pass
+' "${HOME}/.aima-cli/device-state.json" 2>/dev/null || true)"
+    fi
+
+    if [ -n "$_saved_url" ]; then
+        BASE_URL="$_saved_url"
+    elif [ -n "${AIMA_BASE_URL:-}" ]; then
+        # Priority 2: explicit env var override
+        BASE_URL="${AIMA_BASE_URL%/}/api/v1"
+    else
+        # Priority 3: auto-detect region from locale/timezone
+        _region="global"
+        case "${LANG:-}${LC_ALL:-}" in
+            zh_CN*|zh_TW*|zh_HK*) _region="cn" ;;
+        esac
+        if [ "$_region" = "global" ]; then
+            _tz="$(cat /etc/timezone 2>/dev/null || readlink /etc/localtime 2>/dev/null || true)"
+            case "${_tz:-}" in
+                *Shanghai*|*Chongqing*|*Harbin*|*PRC*) _region="cn" ;;
+            esac
+        fi
+        if [ "$_region" = "cn" ]; then
+            BASE_URL="https://aimaserver.com/api/v1"
+        else
+            BASE_URL="https://aimaservice.ai/api/v1"
+        fi
+    fi
+
+    # Clear unfilled template placeholders to sensible defaults
+    case "$POLL_INTERVAL" in *__POLL_INTERVAL*) POLL_INTERVAL=5 ;; esac
+    case "$INVITE_CODE" in *__INVITE*) INVITE_CODE="" ;; esac
+    case "$REFERRAL_CODE" in *__REFERRAL*) REFERRAL_CODE="" ;; esac
+    case "$WORKER_ENROLLMENT_CODE" in *__WORKER*) WORKER_ENROLLMENT_CODE="" ;; esac
+    case "$UTM_SOURCE" in *__UTM_SOURCE*) UTM_SOURCE="" ;; esac
+    case "$UTM_MEDIUM" in *__UTM_MEDIUM*) UTM_MEDIUM="" ;; esac
+    case "$UTM_CAMPAIGN" in *__UTM_CAMPAIGN*) UTM_CAMPAIGN="" ;; esac
+
+    # Channel-specific default invite code: if no explicit invite code and
+    # AIMA_ENTRY_CHANNEL is set by the distribution wrapper (npm/pip/brew),
+    # use the channel's pre-seeded invite code as a fallback.
+    if [ -z "$INVITE_CODE" ] && [ -n "${AIMA_ENTRY_CHANNEL:-}" ]; then
+        case "$AIMA_ENTRY_CHANNEL" in
+            npm)  INVITE_CODE="channel-npm" ;;
+            pip)  INVITE_CODE="channel-pip" ;;
+            brew) INVITE_CODE="channel-brew" ;;
+            aima) INVITE_CODE="channel-aima" ;;
+        esac
+    fi
+
+    # Fetch UX manifest at runtime instead of using baked-in value
+    case "$UX_MANIFEST_JSON" in *__UX_MANIFEST*)
+        UX_MANIFEST_JSON="$(curl -sS --max-time 10 \
+            "${BASE_URL}/ux-manifests/device-go" 2>/dev/null || echo '{}')"
+        ;;
+    esac
+fi
+# ── End standalone mode bootstrap ────────────────────────────────
+
 case "$SHOW_RAW_COMMANDS" in
     1|true|TRUE|yes|YES|on|ON) SHOW_RAW_COMMANDS=1 ;;
     *) SHOW_RAW_COMMANDS=0 ;;
@@ -142,7 +249,7 @@ json_extract_python() {
     local key="$1"
     local kind="$2"
 
-    JSON_KEY="$key" JSON_KIND="$kind" python3 -c '
+    JSON_KEY="$key" JSON_KIND="$kind" "$PYTHON3_BIN" -c '
 import json
 import os
 import sys
@@ -225,28 +332,28 @@ json_extract_sed() {
 }
 
 json_str() {
-    if command -v python3 >/dev/null 2>&1; then
+    if has_usable_python3; then
         printf '%s' "$2" | json_extract_python "$1" "str"
         return
     fi
     json_extract_sed "$1" "str" "$2"
 }
 json_int() {
-    if command -v python3 >/dev/null 2>&1; then
+    if has_usable_python3; then
         printf '%s' "$2" | json_extract_python "$1" "int"
         return
     fi
     json_extract_sed "$1" "int" "$2"
 }
 json_float() {
-    if command -v python3 >/dev/null 2>&1; then
+    if has_usable_python3; then
         printf '%s' "$2" | json_extract_python "$1" "float"
         return
     fi
     json_extract_sed "$1" "float" "$2"
 }
 json_bool() {
-    if command -v python3 >/dev/null 2>&1; then
+    if has_usable_python3; then
         printf '%s' "$2" | json_extract_python "$1" "bool"
         return
     fi
@@ -257,14 +364,14 @@ ux_manifest_text() {
     local path="$1"
     local fallback="${2:-}"
 
-    if ! command -v python3 >/dev/null 2>&1; then
+    if ! has_usable_python3; then
         printf '%s' "$fallback"
         return 0
     fi
 
     local value
     value="$(
-        UX_MANIFEST_PATH="$path" UX_MANIFEST_JSON="$UX_MANIFEST_JSON" python3 - <<'PY'
+        UX_MANIFEST_PATH="$path" UX_MANIFEST_JSON="$UX_MANIFEST_JSON" "$PYTHON3_BIN" - <<'PY'
 import json
 import os
 import sys
@@ -575,6 +682,69 @@ render_security_summary() {
     printf '    \033[32m✓\033[0m %s\n' "$(lang_text "AIMA 不会强制锁死当前终端" "AIMA will not permanently lock this terminal")"
 }
 
+# ── aima shortcut ─────────────────────────────────────────────
+AIMA_SHORTCUT_PATH="${HOME}/.local/bin/aima"
+
+is_aima_shortcut_installed() {
+    [ -x "$AIMA_SHORTCUT_PATH" ] && return 0
+    command -v aima >/dev/null 2>&1 && return 0
+    return 1
+}
+
+install_aima_shortcut() {
+    # Run in subshell so set -e failures don't kill the main script
+    (
+        mkdir -p "${HOME}/.local/bin"
+        cat > "$AIMA_SHORTCUT_PATH" <<'WRAPPER'
+#!/usr/bin/env bash
+_aima_url="$(sed -n 's/^PLATFORM_URL=//p' "${HOME}/.aima-device-state" 2>/dev/null)"
+if [ -z "$_aima_url" ]; then
+    printf 'AIMA: 未找到设备状态。请先运行原始安装命令。\n'
+    printf 'AIMA: No saved device state found. Please run the original setup command first.\n'
+    exit 1
+fi
+exec bash <(curl -sL "${_aima_url}/go.sh") "$@"
+WRAPPER
+        chmod +x "$AIMA_SHORTCUT_PATH"
+
+        # Ensure ~/.local/bin is in PATH (check both live PATH and rc file content to avoid duplicates)
+        if ! echo "$PATH" | tr ':' '\n' | grep -qx "${HOME}/.local/bin"; then
+            local_rc_updated=0
+            for rc_file in "${HOME}/.bashrc" "${HOME}/.zshrc"; do
+                if [ -f "$rc_file" ]; then
+                    if ! grep -qF '/.local/bin' "$rc_file" 2>/dev/null; then
+                        printf '\n# Added by AIMA - aima shortcut\nexport PATH="${HOME}/.local/bin:${PATH}"\n' >> "$rc_file"
+                    fi
+                    local_rc_updated=1
+                fi
+            done
+            if [ "$local_rc_updated" -eq 0 ]; then
+                printf '# Added by AIMA - aima shortcut\nexport PATH="${HOME}/.local/bin:${PATH}"\n' >> "${HOME}/.bashrc"
+            fi
+        fi
+    )
+}
+
+prompt_aima_shortcut() {
+    if [ "$RUN_AS_OWNER" -eq 1 ]; then return; fi
+    if ! tty_available; then return; fi
+    if is_aima_shortcut_installed; then return; fi
+
+    printf '\n'
+    printf '  \033[1m%s\033[0m\n' "$(lang_text '是否添加 aima 快捷命令？之后只需输入 aima 即可重新连接。' 'Add aima shortcut? Then just type aima to reconnect.')"
+    printf '  [Y/n] '
+    local answer=""
+    read_tty answer || true
+    answer="$(printf '%s' "$answer" | tr -d '[:space:]')"
+    if [ "$answer" != "n" ] && [ "$answer" != "N" ]; then
+        if install_aima_shortcut; then
+            printf '  \033[32m✓\033[0m %s\n' "$(lang_text '已添加。打开新终端后输入 aima 即可启动。' 'Done. Open a new terminal and type aima to start.')"
+        else
+            warn "$(lang_text '快捷命令安装失败，不影响正常使用。' 'Shortcut installation failed; this does not affect normal usage.')"
+        fi
+    fi
+}
+
 render_attached_banner() {
     refresh_window_title
     printf '\n\033[36m  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m\n'
@@ -789,7 +959,7 @@ infer_task_type_hint_from_text() {
 }
 
 detect_command_runtime_backend() {
-    if command -v python3 >/dev/null 2>&1; then
+    if has_usable_python3; then
         printf 'python3'
         return 0
     fi
@@ -978,7 +1148,7 @@ launch_command_detached() {
         python3)
             pid_file="$(mktemp)"
             COMMAND_TEXT="$cmd" COMMAND_STDOUT_FILE="$stdout_file" COMMAND_STDERR_FILE="$stderr_file" COMMAND_PID_FILE="$pid_file" COMMAND_WORK_DIR="$work_dir" COMMAND_ARTIFACT_DIR="$artifact_dir" \
-                python3 - <<'PY' &
+                "$PYTHON3_BIN" - <<'PY' &
 import os
 import sys
 
@@ -1123,7 +1293,7 @@ terminate_process_tree() {
         return 0
     fi
     if [ "$COMMAND_RUNTIME_BACKEND" = "python3" ]; then
-        python3 - "$cmd_pid" <<'PY'
+        "$PYTHON3_BIN" - "$cmd_pid" <<'PY'
 import os
 import signal
 import sys
@@ -1568,9 +1738,9 @@ load_recovery_code_from_saved_state() {
     [ -n "${EXISTING_RECOVERY_CODE:-${RECOVERY_CODE:-}}" ] && return 1
 
     cli_state_file="${HOME}/.aima-cli/device-state.json"
-    if [ -f "$cli_state_file" ] && command -v python3 >/dev/null 2>&1; then
+    if [ -f "$cli_state_file" ] && has_usable_python3; then
         saved_rc="$(
-            CLI_STATE_FILE="$cli_state_file" python3 - <<'PY'
+            CLI_STATE_FILE="$cli_state_file" "$PYTHON3_BIN" - <<'PY'
 import json
 import os
 import sys
@@ -1588,7 +1758,7 @@ if isinstance(value, str):
 PY
         )"
         saved_url="$(
-            CLI_STATE_FILE="$cli_state_file" python3 - <<'PY'
+            CLI_STATE_FILE="$cli_state_file" "$PYTHON3_BIN" - <<'PY'
 import json
 import os
 import sys
@@ -3667,7 +3837,11 @@ _SH_PROXY_NO_CONFIGURED=false
 [ -n "${https_proxy:-${HTTPS_PROXY:-}}" ] && _SH_PROXY_HTTPS_CONFIGURED=true
 [ -n "${no_proxy:-${NO_PROXY:-}}" ] && _SH_PROXY_NO_CONFIGURED=true
 _SH_NODE_VER="$(node --version 2>/dev/null || true)"
-_SH_PY_VER="$(python3 --version 2>/dev/null | awk '{print $2}' || true)"
+if has_usable_python3; then
+    _SH_PY_VER="$("$PYTHON3_BIN" --version 2>/dev/null | awk '{print $2}' || true)"
+else
+    _SH_PY_VER=""
+fi
 _SH_LOCALE="${LANG:-}"
 
 ESCAPED_OS_TYPE="$(json_escape "${OS_TYPE}")"
@@ -3761,6 +3935,7 @@ if [ -f "$STATE_FILE" ]; then
             if [ -n "$owner_health_detail" ]; then
                 append_owner_log_line "INFO" "launcher restarted background owner during reconnect: ${owner_health_detail}"
             fi
+            prompt_aima_shortcut
             ATTACH_MODE_STARTED=1
             attach_main_loop
             exit 0
@@ -3905,6 +4080,7 @@ refresh_account_snapshot || true
 persist_state_value "REFERRAL_CODE" "${MY_REFERRAL_CODE:-}"
 render_connected_summary
 render_security_summary
+prompt_aima_shortcut
 
 # ── Start ────────────────────────────────────────────────────────
 ensure_runtime_dir

@@ -5,14 +5,113 @@ $ProgressPreference = "SilentlyContinue"
 [Net.ServicePointManager]::Expect100Continue = $false
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls11 -bor [Net.SecurityProtocolType]::Tls
 
-$BaseUrl = __BASE_URL__
-$PollIntervalSeconds = [int]"__POLL_INTERVAL_SECONDS__"
-$script:ReferralCode = __REFERRAL_CODE__
-$WorkerEnrollmentCode = __WORKER_CODE__
-$UtmSource = __UTM_SOURCE__
-$UtmMedium = __UTM_MEDIUM__
-$UtmCampaign = __UTM_CAMPAIGN__
+# Path constants (no placeholder dependency — safe to define early)
 $StateFile = Join-Path $env:USERPROFILE ".aima-device-state"
+
+# ── Template placeholders (filled by server in curl|iex mode) ────
+# Standalone-safe defaults; overridden by server-rendered values below.
+$BaseUrl = $null
+$PollIntervalSeconds = 5
+$script:ReferralCode = $null
+$WorkerEnrollmentCode = $null
+$UtmSource = $null
+$UtmMedium = $null
+$UtmCampaign = $null
+$script:InviteCode = $null
+$script:UxManifestJson = $null
+try {
+    $BaseUrl = __BASE_URL__
+    $PollIntervalSeconds = [int]"__POLL_INTERVAL_SECONDS__"
+    $script:ReferralCode = __REFERRAL_CODE__
+    $WorkerEnrollmentCode = __WORKER_CODE__
+    $UtmSource = __UTM_SOURCE__
+    $UtmMedium = __UTM_MEDIUM__
+    $UtmCampaign = __UTM_CAMPAIGN__
+    $script:InviteCode = __INVITE_CODE__
+    $script:UxManifestJson = __UX_MANIFEST_JSON__
+} catch {
+    # Standalone mode: placeholders not filled by server. Preamble will bootstrap.
+}
+
+# ── Standalone mode bootstrap ────────────────────────────────────
+# When installed via pip/npm/brew, template placeholders remain unfilled.
+# Detect this and bootstrap configuration at runtime.
+# In server-rendered mode (iex), this block is a no-op.
+# Split sentinel so server-side rendering (which replaces __BASE_URL__ globally)
+# cannot alter this detection.  PowerShell joins the halves at runtime.
+$_unfilledSentinel = "__BASE" + "_URL__"
+$_standaloneMode = [string]::IsNullOrEmpty($BaseUrl) -or ($BaseUrl -match [regex]::Escape($_unfilledSentinel))
+
+if ($_standaloneMode) {
+    $_savedUrl = $null
+
+    # Priority 1: reuse platform URL from saved state (reconnect)
+    if (Test-Path $StateFile) {
+        foreach ($line in (Get-Content $StateFile -ErrorAction SilentlyContinue)) {
+            if ($line -match '^PLATFORM_URL=(.+)$') { $_savedUrl = $Matches[1] }
+        }
+    }
+    # Priority 1b: cross-read from Python CLI JSON state
+    if (-not $_savedUrl) {
+        $cliState = Join-Path $env:USERPROFILE ".aima-cli" "device-state.json"
+        if (Test-Path $cliState) {
+            try {
+                $cliData = Get-Content $cliState -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json
+                if ($cliData.platform_url) { $_savedUrl = $cliData.platform_url }
+            } catch {}
+        }
+    }
+
+    if ($_savedUrl) {
+        $BaseUrl = $_savedUrl
+    } elseif ($env:AIMA_BASE_URL) {
+        # Priority 2: explicit env var override
+        $BaseUrl = "$($env:AIMA_BASE_URL.TrimEnd('/'))/api/v1"
+    } else {
+        # Priority 3: auto-detect region from culture/timezone
+        $_region = "global"
+        try {
+            $culture = [System.Globalization.CultureInfo]::CurrentCulture.Name
+            if ($culture -match '^zh') { $_region = "cn" }
+        } catch {}
+        if ($_region -eq "global") {
+            try {
+                $tz = [System.TimeZoneInfo]::Local.Id
+                if ($tz -match 'China|Beijing|Shanghai') { $_region = "cn" }
+            } catch {}
+        }
+        if ($_region -eq "cn") {
+            $BaseUrl = "https://aimaserver.com/api/v1"
+        } else {
+            $BaseUrl = "https://aimaservice.ai/api/v1"
+        }
+    }
+
+    # Fetch UX manifest at runtime (variables are already $null from defaults
+    # since the try block fails entirely when __BASE_URL__ is unfilled)
+    if ([string]::IsNullOrEmpty($script:UxManifestJson)) {
+        try {
+            $resp = Invoke-WebRequest -UseBasicParsing -Uri "$BaseUrl/ux-manifests/device-go" -TimeoutSec 10
+            $script:UxManifestJson = $resp.Content
+        } catch {
+            $script:UxManifestJson = '{}'
+        }
+    }
+
+    # Channel-specific default invite code: if no explicit invite code and
+    # AIMA_ENTRY_CHANNEL is set by the distribution wrapper (npm/pip/brew),
+    # use the channel's pre-seeded invite code as a fallback.
+    if ([string]::IsNullOrEmpty($script:InviteCode) -and $env:AIMA_ENTRY_CHANNEL) {
+        switch ($env:AIMA_ENTRY_CHANNEL) {
+            "npm"  { $script:InviteCode = "channel-npm" }
+            "pip"  { $script:InviteCode = "channel-pip" }
+            "brew" { $script:InviteCode = "channel-brew" }
+            "aima" { $script:InviteCode = "channel-aima" }
+        }
+    }
+}
+# ── End standalone mode bootstrap ────────────────────────────────
+
 $RuntimeDir = Join-Path $env:USERPROFILE ".aima-device-runtime"
 $script:OwnerScriptPath = Join-Path $RuntimeDir "go-owner.ps1"
 $script:OwnerPidFile = Join-Path $RuntimeDir "owner.pid"
@@ -29,7 +128,6 @@ $script:DisconnectRequestFile = Join-Path $RuntimeDir "disconnect.request"
 $script:CommandExecutionRoot = Join-Path $RuntimeDir "executions"
 $script:CommandResultTailMaxChars = 131072
 $script:CommandProgressTailMaxChars = 4096
-$script:InviteCode = $null
 $script:ActiveTaskId = $null
 $script:ConfirmedActiveTaskId = $null
 $script:LastVisibleActiveTaskId = $null
@@ -59,7 +157,6 @@ $script:DeviceMaxTasks = $null
 $script:DeviceUsedTasks = $null
 $script:DeviceBudgetUsd = $null
 $script:DeviceSpentUsd = $null
-$script:UxManifestJson = __UX_MANIFEST_JSON__
 $script:UxManifest = $null
 if ($env:AIMA_SHOW_RAW_COMMANDS) {
     switch ($env:AIMA_SHOW_RAW_COMMANDS.ToLowerInvariant()) {
@@ -188,6 +285,57 @@ function Get-CommandPreview {
     return $singleLine.Substring(0, $MaxLength - 3).TrimEnd() + "..."
 }
 
+function Resolve-UsableCommandPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name
+    )
+
+    $command = Get-Command $Name -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $command) {
+        return $null
+    }
+
+    $source = $null
+    foreach ($prop in @("Source", "Path", "Definition")) {
+        if ($command.PSObject.Properties.Name -contains $prop) {
+            $candidate = $command.$prop
+            if ($candidate) {
+                $source = [string]$candidate
+                break
+            }
+        }
+    }
+
+    if (-not $source) {
+        return $null
+    }
+
+    # Windows may expose python/python3 through Microsoft Store app execution aliases.
+    # Executing those aliases before /go registers the device can pop the Store UI.
+    if (($Name -ieq "python" -or $Name -ieq "python3") -and $source -match '[\\/]Microsoft[\\/]WindowsApps[\\/]') {
+        return $null
+    }
+
+    return $source
+}
+
+function Get-UsablePython3Version {
+    $pythonPath = Resolve-UsableCommandPath -Name "python3"
+    if (-not $pythonPath) {
+        return $null
+    }
+
+    try {
+        $versionOutput = & $pythonPath --version 2>$null
+        if ($versionOutput -match 'Python\s+(.+)') {
+            return $matches[1]
+        }
+    } catch { }
+
+    return $null
+}
+
 function Get-PackageManagers {
     $mgrs = @()
     if (Get-Command winget -ErrorAction SilentlyContinue) { $mgrs += "winget" }
@@ -223,7 +371,7 @@ function Get-OSProfile {
     $proxyHttps = @($env:HTTPS_PROXY, $env:https_proxy) | Where-Object { $_ } | Select-Object -First 1
     $proxyNo = @($env:NO_PROXY, $env:no_proxy) | Where-Object { $_ } | Select-Object -First 1
     $nodeVer = try { (node --version 2>$null) } catch { $null }
-    $pyVer = try { $v = (python3 --version 2>$null); if ($v -match 'Python\s+(.+)') { $matches[1] } else { $null } } catch { $null }
+    $pyVer = Get-UsablePython3Version
 
     return @{
         os_type     = $osName
@@ -620,6 +768,56 @@ function Show-SecuritySummary {
     Write-Host "    ✓ $(Get-LangText '高风险操作需管理员审批' 'High-risk commands require admin approval')" -ForegroundColor Green
     Write-Host "    ✓ $(Get-LangText '任务运行中可随时中断' 'You can interrupt running tasks at any time')" -ForegroundColor Green
     Write-Host "    ✓ $(Get-LangText 'AIMA 不会强制锁死当前终端' 'AIMA will not permanently lock this terminal')" -ForegroundColor Green
+}
+
+# ── aima shortcut ─────────────────────────────────────────────
+$script:AimaShortcutDir = Join-Path $env:USERPROFILE ".local\bin"
+$script:AimaShortcutPath = Join-Path $script:AimaShortcutDir "aima.cmd"
+
+function Test-AimaShortcutInstalled {
+    if (Test-Path -LiteralPath $script:AimaShortcutPath) { return $true }
+    if (Get-Command aima -ErrorAction SilentlyContinue) { return $true }
+    return $false
+}
+
+function Install-AimaShortcut {
+    New-Item -ItemType Directory -Force -Path $script:AimaShortcutDir | Out-Null
+
+    $cmdContent = @"
+@echo off
+for /f "tokens=1,* delims==" %%a in ('findstr /b "PLATFORM_URL=" "%USERPROFILE%\.aima-device-state"') do set "AIMA_URL=%%b"
+if not defined AIMA_URL (
+    echo AIMA: No saved device state. Please run the original setup command first.
+    exit /b 1
+)
+powershell -NoProfile -ExecutionPolicy Bypass -Command "iex (irm '%AIMA_URL%/go')"
+"@
+    Set-Content -LiteralPath $script:AimaShortcutPath -Value $cmdContent -Encoding ascii
+
+    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    if ($userPath -and ($userPath -split ';' | Where-Object { $_ -eq $script:AimaShortcutDir })) {
+        return
+    }
+    $newPath = if ($userPath) { "$script:AimaShortcutDir;$userPath" } else { $script:AimaShortcutDir }
+    [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+}
+
+function Prompt-AimaShortcut {
+    if ($script:RunAsOwner) { return }
+    if (Test-AimaShortcutInstalled) { return }
+
+    Write-Host ""
+    Write-Host "  $(Get-LangText '是否添加 aima 快捷命令？之后只需输入 aima 即可重新连接。' 'Add aima shortcut? Then just type aima to reconnect.')" -ForegroundColor White
+    $answer = Read-Host "  [Y/n]"
+    $answer = $answer.Trim()
+    if ($answer -ne 'n' -and $answer -ne 'N') {
+        try {
+            Install-AimaShortcut
+            Write-Host "  ✓ $(Get-LangText '已添加。打开新终端后输入 aima 即可启动。' 'Done. Open a new terminal and type aima to start.')" -ForegroundColor Green
+        } catch {
+            Write-Host "  ! $(Get-LangText '快捷命令安装失败，不影响正常使用。' 'Shortcut installation failed; this does not affect normal usage.')" -ForegroundColor Yellow
+        }
+    }
 }
 
 function Show-AttachedBanner {
@@ -3675,6 +3873,7 @@ try {
 
     if (-not $script:RunAsOwner) {
         Show-SecuritySummary
+        Prompt-AimaShortcut
 
         $ownerHealthDetail = $null
         if ($reuseOk) {
