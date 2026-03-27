@@ -1961,8 +1961,11 @@ write_task_completion_file() {
     local referral_code="$7"
     local share_text="$8"
     local task_message="${9:-}"
+    local budget_warning="${10:-}"
+    local budget_binding_incentive="${11:-}"
     local escaped_task escaped_status escaped_tasks_remaining escaped_tasks_total
     local escaped_usd_remaining escaped_usd_total escaped_referral escaped_share escaped_message
+    local escaped_budget_warning escaped_budget_binding_incentive
     escaped_task="$(json_escape "$task_id")"
     escaped_status="$(json_escape "$task_status")"
     escaped_tasks_remaining="$(json_escape "$budget_tasks_remaining")"
@@ -1972,7 +1975,9 @@ write_task_completion_file() {
     escaped_referral="$(json_escape "$referral_code")"
     escaped_share="$(json_escape "$share_text")"
     escaped_message="$(json_escape "$task_message")"
-    write_runtime_file "$TASK_COMPLETION_FILE" "{\"task_id\":\"${escaped_task}\",\"task_status\":\"${escaped_status}\",\"budget_tasks_remaining\":\"${escaped_tasks_remaining}\",\"budget_tasks_total\":\"${escaped_tasks_total}\",\"budget_usd_remaining\":\"${escaped_usd_remaining}\",\"budget_usd_total\":\"${escaped_usd_total}\",\"referral_code\":\"${escaped_referral}\",\"share_text\":\"${escaped_share}\",\"task_message\":\"${escaped_message}\",\"updated_at\":\"$(date +%s)\"}"
+    escaped_budget_warning="$(json_escape "$budget_warning")"
+    escaped_budget_binding_incentive="$(json_escape "$budget_binding_incentive")"
+    write_runtime_file "$TASK_COMPLETION_FILE" "{\"task_id\":\"${escaped_task}\",\"task_status\":\"${escaped_status}\",\"budget_tasks_remaining\":\"${escaped_tasks_remaining}\",\"budget_tasks_total\":\"${escaped_tasks_total}\",\"budget_usd_remaining\":\"${escaped_usd_remaining}\",\"budget_usd_total\":\"${escaped_usd_total}\",\"referral_code\":\"${escaped_referral}\",\"share_text\":\"${escaped_share}\",\"task_message\":\"${escaped_message}\",\"budget_warning\":\"${escaped_budget_warning}\",\"budget_binding_incentive\":\"${escaped_budget_binding_incentive}\",\"updated_at\":\"$(date +%s)\"}"
 }
 
 owner_pid() {
@@ -2315,6 +2320,8 @@ show_task_completion_card() {
     local referral_code="$6"
     local share_text="$7"
     local task_message="${8:-}"
+    local budget_warning="${9:-}"
+    local budget_binding_incentive="${10:-}"
 
     refresh_window_title
 
@@ -2334,6 +2341,13 @@ show_task_completion_card() {
             printf '  %s: \033[1m%s\033[0m\n' \
                 "$(lang_text "金额额度" "Amount budget")" \
                 "$(format_amount_budget_remaining_line "$budget_usd_remaining" "$budget_usd_total")"
+        fi
+
+        if [ -n "$budget_warning" ]; then
+            printf '\n  \033[1;33m⚠ %s\033[0m\n' "$budget_warning"
+            if [ -n "$budget_binding_incentive" ]; then
+                printf '  \033[33m💡 %s\033[0m\n' "$budget_binding_incentive"
+            fi
         fi
 
         if [ -n "$referral_code" ]; then
@@ -3146,7 +3160,10 @@ attach_handle_task_completion() {
     budget_tasks_total="$(json_str budget_tasks_total "$payload")"
     budget_usd_remaining="$(json_str budget_usd_remaining "$payload")"
     budget_usd_total="$(json_str budget_usd_total "$payload")"
-    show_task_completion_card "$task_status" "$budget_tasks_remaining" "$budget_tasks_total" "$budget_usd_remaining" "$budget_usd_total" "$referral_code" "$share_text" "$task_message"
+    local attach_budget_warning attach_budget_binding_incentive
+    attach_budget_warning="$(json_str budget_warning "$payload")"
+    attach_budget_binding_incentive="$(json_str budget_binding_incentive "$payload")"
+    show_task_completion_card "$task_status" "$budget_tasks_remaining" "$budget_tasks_total" "$budget_usd_remaining" "$budget_usd_total" "$referral_code" "$share_text" "$task_message" "$attach_budget_warning" "$attach_budget_binding_incentive"
     [ "$DETACH_REQUESTED" -eq 1 ] && return 0
     prompt_post_task_feedback "$task_id"
     rm -f "$TASK_COMPLETION_FILE" "$SESSION_STATUS_FILE"
@@ -3723,6 +3740,9 @@ exec_main_loop() {
             notif_budget_usd_remaining="$(json_float notif_budget_usd_remaining "$resp")"
             notif_budget_usd_total="$(json_float notif_budget_usd_total "$resp")"
             notif_task_message="$(json_str notif_task_message "$resp")"
+            local notif_budget_warning notif_budget_binding_incentive
+            notif_budget_warning="$(json_str budget_warning "$resp")"
+            notif_budget_binding_incentive="$(json_str budget_binding_incentive "$resp")"
 
             # Update local referral code if received
             if [ -n "$notif_referral_code" ]; then
@@ -3740,7 +3760,9 @@ exec_main_loop() {
                     "$notif_budget_usd_total" \
                     "$notif_referral_code" \
                     "$notif_share_text" \
-                    "$notif_task_message"
+                    "$notif_task_message" \
+                    "$notif_budget_warning" \
+                    "$notif_budget_binding_incentive"
                 if [ "$notif_task_status" = "succeeded" ]; then
                     write_session_status "result" "info" "$(lang_text "任务已报告完成，请验证实际结果。" "Task reported complete. Please verify the result.")"
                 else
@@ -3755,7 +3777,9 @@ exec_main_loop() {
                     "$notif_budget_usd_total" \
                     "$notif_referral_code" \
                     "$notif_share_text" \
-                    "$notif_task_message"
+                    "$notif_task_message" \
+                    "$notif_budget_warning" \
+                    "$notif_budget_binding_incentive"
                 prompt_post_task_feedback "$notif_task_id"
                 printf '\n'
                 print_execution_separator
