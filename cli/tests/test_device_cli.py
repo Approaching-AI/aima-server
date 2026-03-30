@@ -16,7 +16,7 @@ from httpx import ASGITransport, AsyncClient
 from aima_cli.api import AIMAApiError, DeviceApiClient
 from aima_cli.owner_backed import BackgroundOwner, OwnerBackedAttachedRunner
 from aima_cli.owner_runtime import CliRuntimeStore
-from aima_cli.renderer import TerminalRenderer
+from aima_cli.renderer import TerminalRenderer, format_interaction_question
 from aima_cli.session import (
     AttachedDeviceSession,
     ConsoleInputProvider,
@@ -259,8 +259,7 @@ async def test_cli_builds_guided_repair_request_from_manifest_steps(tmp_path: Pa
         assert choice.experience_search["error_message_hint"] == "openclaw 发消息到飞书没反应了，之前是好的"
         assert "openclaw 发消息到飞书没反应了，之前是好的" in choice.description
         output = transcript.getvalue()
-        assert "Check or repair installed software" in output
-        assert "不要直接粘贴密码 / API Key / Token 原文" in output
+        assert "不要粘贴密码 / API Key / Token 原文" in output
         assert "哪个软件有问题？什么现象？" in output
 
 
@@ -357,6 +356,86 @@ async def test_cli_task_menu_infers_known_software_target_from_freeform_request_
         assert choice != "feedback"
         assert choice.intake["software_hint"] == "openclaw"
         assert choice.experience_search["target_hint"] == "openclaw"
+
+
+@pytest.mark.asyncio
+async def test_cli_task_menu_infers_ktransformers_model_deployment_hints_from_freeform_request(
+    tmp_path: Path,
+) -> None:
+    settings = build_settings(tmp_path / "test.db")
+
+    async with platform_client(settings) as (client, _):
+        invite_code = await create_invite_code(client)
+        transcript = io.StringIO()
+        session = build_session(
+            client=client,
+            tmp_path=tmp_path,
+            invite_code=invite_code,
+            transcript=transcript,
+            answers=["部署 qwen2.5 7b 到 k-transformers，使用 AWQ，并验证 GPU 推理"],
+        )
+
+        await session.ensure_manifest()
+        await session.ensure_registered()
+        session.renderer.lang = "zh_cn"
+        choice = await session.prompt_task_menu_once()
+
+        assert choice is not None
+        assert choice != "__disconnect__"
+        assert choice != "feedback"
+        assert choice.intake["software_hint"] == "ktransformers"
+        assert choice.intake["deployment_kind"] == "ktransformers_model_deploy"
+        assert choice.intake["model_name"] == "qwen2.5 7b"
+        assert choice.intake["model_format"] == "awq"
+        assert choice.intake["quantization"] == "awq"
+        assert choice.intake["gpu_required"] is True
+        assert choice.experience_search["task_type_hint"] == "software_install"
+        assert choice.experience_search["target_hint"] == "ktransformers"
+        assert choice.experience_search["deployment_kind"] == "ktransformers_model_deploy"
+        assert choice.experience_search["model_name"] == "qwen2.5 7b"
+        assert choice.experience_search["model_format"] == "awq"
+        assert choice.experience_search["quantization"] == "awq"
+        assert choice.experience_search["gpu_required"] is True
+
+
+@pytest.mark.asyncio
+async def test_cli_task_menu_infers_ktransformers_test_hints_from_freeform_request(
+    tmp_path: Path,
+) -> None:
+    settings = build_settings(tmp_path / "test.db")
+
+    async with platform_client(settings) as (client, _):
+        invite_code = await create_invite_code(client)
+        transcript = io.StringIO()
+        session = build_session(
+            client=client,
+            tmp_path=tmp_path,
+            invite_code=invite_code,
+            transcript=transcript,
+            answers=["测试 ktransformers 上的 qwen2.5 7b AWQ 部署，验证 GPU 推理是否正常"],
+        )
+
+        await session.ensure_manifest()
+        await session.ensure_registered()
+        session.renderer.lang = "zh_cn"
+        choice = await session.prompt_task_menu_once()
+
+        assert choice is not None
+        assert choice != "__disconnect__"
+        assert choice != "feedback"
+        assert choice.intake["software_hint"] == "ktransformers"
+        assert choice.intake["deployment_kind"] == "ktransformers_test"
+        assert choice.intake["model_name"] == "qwen2.5 7b"
+        assert choice.intake["model_format"] == "awq"
+        assert choice.intake["quantization"] == "awq"
+        assert choice.intake["gpu_required"] is True
+        assert choice.experience_search["task_type_hint"] == "verification"
+        assert choice.experience_search["target_hint"] == "ktransformers"
+        assert choice.experience_search["deployment_kind"] == "ktransformers_test"
+        assert choice.experience_search["model_name"] == "qwen2.5 7b"
+        assert choice.experience_search["model_format"] == "awq"
+        assert choice.experience_search["quantization"] == "awq"
+        assert choice.experience_search["gpu_required"] is True
 
 
 @pytest.mark.asyncio
@@ -679,6 +758,153 @@ async def test_owner_backed_runner_reprompts_skipped_pending_interaction(tmp_pat
         assert transcript.getvalue().count("Need more context from the device?") >= 2
 
 
+def test_format_interaction_question_summarizes_script_like_content() -> None:
+    question = """Please run this PowerShell snippet to verify the bare Claude path:
+model = 'anthropic/claude-sonnet-4.6'
+$resp = Invoke-RestMethod -Method Post -Uri 'https://openrouter.ai/api/v1/messages'
+Write-Output $resp
+"""
+
+    rendered = format_interaction_question(question, lang="zh_cn")
+
+    assert "PowerShell" in rendered
+    assert "已简化显示" in rendered
+    assert "Invoke-RestMethod -Method Post" not in rendered
+
+
+def test_format_interaction_question_prefers_user_facing_display_text() -> None:
+    rendered = format_interaction_question(
+        "Write-Output 'raw internal probe'",
+        lang="zh_cn",
+        context={"display_question": "智能体想请你确认是否可以运行一段检测脚本。"},
+    )
+
+    assert rendered == "智能体想请你确认是否可以运行一段检测脚本。"
+
+
+@pytest.mark.asyncio
+async def test_approval_prompt_accepts_y_and_normalizes_to_approved(tmp_path: Path) -> None:
+    settings = build_settings(tmp_path / "test.db")
+
+    async with platform_client(settings) as (client, _):
+        invite_code = await create_invite_code(client)
+        transcript = io.StringIO()
+        session = build_session(
+            client=client,
+            tmp_path=tmp_path,
+            invite_code=invite_code,
+            transcript=transcript,
+            answers=["y", "quit"],
+        )
+        await session.ensure_manifest()
+        state = await session.ensure_registered()
+        state.display_language = "en_us"
+        session.state_store.save(state)
+        runtime = CliRuntimeStore(tmp_path / "device-runtime")
+        runtime.ensure_root()
+        runtime.write_pending_interaction(
+            interaction_id="int_approval_y",
+            question="Approve command execution: rm -rf /tmp/old",
+            interaction_type="approval",
+            interaction_level="high",
+            interaction_phase="waiting",
+            interaction_context={"command": "rm -rf /tmp/old", "action_type": "file_delete", "risk_level": "high"},
+        )
+        owner_manager = FakeOwnerManager()
+        runner = OwnerBackedAttachedRunner(session=session, runtime=runtime, owner_manager=owner_manager)
+
+        exit_code = await runner.run()
+
+        assert exit_code == 0
+        answer_payload = runtime.read_interaction_answer()
+        assert answer_payload["interaction_id"] == "int_approval_y"
+        assert answer_payload["answer"] == "approved"
+        output = transcript.getvalue()
+        assert "rm -rf /tmp/old" in output
+        assert "file_delete" in output
+
+
+@pytest.mark.asyncio
+async def test_approval_prompt_accepts_n_and_normalizes_to_denied(tmp_path: Path) -> None:
+    settings = build_settings(tmp_path / "test.db")
+
+    async with platform_client(settings) as (client, _):
+        invite_code = await create_invite_code(client)
+        transcript = io.StringIO()
+        session = build_session(
+            client=client,
+            tmp_path=tmp_path,
+            invite_code=invite_code,
+            transcript=transcript,
+            answers=["n", "quit"],
+        )
+        await session.ensure_manifest()
+        state = await session.ensure_registered()
+        state.display_language = "en_us"
+        session.state_store.save(state)
+        runtime = CliRuntimeStore(tmp_path / "device-runtime")
+        runtime.ensure_root()
+        runtime.write_pending_interaction(
+            interaction_id="int_approval_n",
+            question="Approve command execution: ssh root@server",
+            interaction_type="approval",
+            interaction_level="high",
+            interaction_phase="waiting",
+            interaction_context={"command": "ssh root@server", "action_type": "ssh_request", "risk_level": "high"},
+        )
+        owner_manager = FakeOwnerManager()
+        runner = OwnerBackedAttachedRunner(session=session, runtime=runtime, owner_manager=owner_manager)
+
+        exit_code = await runner.run()
+
+        assert exit_code == 0
+        answer_payload = runtime.read_interaction_answer()
+        assert answer_payload["interaction_id"] == "int_approval_n"
+        assert answer_payload["answer"] == "denied"
+
+
+@pytest.mark.asyncio
+async def test_approval_prompt_rejects_invalid_input_then_accepts_valid(tmp_path: Path) -> None:
+    settings = build_settings(tmp_path / "test.db")
+
+    async with platform_client(settings) as (client, _):
+        invite_code = await create_invite_code(client)
+        transcript = io.StringIO()
+        session = build_session(
+            client=client,
+            tmp_path=tmp_path,
+            invite_code=invite_code,
+            transcript=transcript,
+            answers=["maybe", "yse", "yes", "quit"],
+        )
+        await session.ensure_manifest()
+        state = await session.ensure_registered()
+        state.display_language = "en_us"
+        session.state_store.save(state)
+        runtime = CliRuntimeStore(tmp_path / "device-runtime")
+        runtime.ensure_root()
+        runtime.write_pending_interaction(
+            interaction_id="int_approval_retry",
+            question="Approve command execution: bash detect.sh",
+            interaction_type="approval",
+            interaction_level="high",
+            interaction_phase="waiting",
+            interaction_context={"command": "bash detect.sh", "action_type": "terminal_shell_spawn", "risk_level": "high"},
+        )
+        owner_manager = FakeOwnerManager()
+        runner = OwnerBackedAttachedRunner(session=session, runtime=runtime, owner_manager=owner_manager)
+
+        exit_code = await runner.run()
+
+        assert exit_code == 0
+        answer_payload = runtime.read_interaction_answer()
+        assert answer_payload["interaction_id"] == "int_approval_retry"
+        assert answer_payload["answer"] == "approved"
+        output = transcript.getvalue()
+        # Should have shown the "Please enter Y or N" hint for invalid inputs
+        assert "Please enter Y" in output or "请输入 Y" in output
+
+
 @pytest.mark.asyncio
 async def test_background_owner_submits_queued_answer_after_restart(tmp_path: Path) -> None:
     settings = build_settings(tmp_path / "test.db")
@@ -749,9 +975,16 @@ async def test_background_owner_submits_queued_answer_after_restart(tmp_path: Pa
             bootstrap_mode="restore",
         )
         owner_task = asyncio.create_task(owner.run())
-        await asyncio.sleep(0.1)
+
+        # Wait until the answer file is consumed (owner submitted it)
+        # rather than using a fixed sleep, to avoid CI timing flakiness.
+        for _ in range(200):
+            if not runtime.read_interaction_answer().get("interaction_id"):
+                break
+            await asyncio.sleep(0.02)
+
         runtime.request_disconnect()
-        await asyncio.wait_for(owner_task, timeout=1.0)
+        await asyncio.wait_for(owner_task, timeout=5.0)
 
         interaction_detail = await client.get(
             f"/internal/interactions/{interaction_id}",

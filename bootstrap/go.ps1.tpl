@@ -547,6 +547,156 @@ function Get-UxTextLang {
     return Get-UxText -Path "$Path.text" -Fallback $Fallback
 }
 
+function Get-ShortInteractionText {
+    param(
+        [string]$Text,
+        [int]$Limit = 88
+    )
+
+    if (-not $Text) {
+        return ""
+    }
+    if ($Text.Length -le $Limit) {
+        return $Text
+    }
+    return ($Text.Substring(0, [Math]::Max(0, $Limit - 3)).TrimEnd() + "...")
+}
+
+function Test-InteractionLineLooksCodeLike {
+    param([string]$Line)
+
+    if (-not $Line) {
+        return $false
+    }
+    $trimmed = $Line.Trim()
+    if (-not $trimmed) {
+        return $false
+    }
+    if ($trimmed.StartsWith('```') -or $trimmed.StartsWith('{') -or $trimmed.StartsWith('[') -or $trimmed.StartsWith('PS ') -or $trimmed.StartsWith('> ') -or $trimmed.StartsWith('$ ') -or $trimmed.StartsWith('#!')) {
+        return $true
+    }
+    if ($trimmed -match '^[ $A-Za-z_][A-Za-z0-9_:. -]*=') {
+        return $true
+    }
+    if ($trimmed -match '(?i)(Invoke-RestMethod|Write-Output|ConvertTo-Json|Start-Process|Read-Host|Get-[A-Za-z]+|Set-[A-Za-z]+)|(^|\s)\$env:|(^|\s)\$[A-Za-z_][A-Za-z0-9_]*') {
+        return $true
+    }
+    if ($trimmed -match '(?i)^(#!/|curl\b|bash\b|sh\b|zsh\b|sudo\b|chmod\b|export\b|apt(-get)?\b|brew\b|npm\b|pnpm\b|yarn\b|python3?\b)') {
+        return $true
+    }
+    return $false
+}
+
+function Get-InteractionLeadLine {
+    param([string]$Question)
+
+    if (-not $Question) {
+        return ""
+    }
+    foreach ($line in ($Question -split "`r?`n")) {
+        $trimmed = $line.Trim()
+        if (-not $trimmed) {
+            continue
+        }
+        $trimmed = $trimmed.TrimEnd(':', '：')
+        if (Test-InteractionLineLooksCodeLike $trimmed) {
+            continue
+        }
+        return $trimmed
+    }
+    return ""
+}
+
+function Get-InteractionQuestionKind {
+    param([string]$Question)
+
+    if (-not $Question) {
+        return "plain"
+    }
+    $trimmed = $Question.TrimStart()
+    if (($trimmed.StartsWith('{') -or $trimmed.StartsWith('[')) -and ($trimmed -match '[:\{\[]')) {
+        return "json"
+    }
+    if ($Question -match '(?i)(Invoke-RestMethod|Write-Output|ConvertTo-Json|Start-Process|Read-Host|Get-[A-Za-z]+|Set-[A-Za-z]+)|(^|\s)\$env:|(^|\s)\$[A-Za-z_][A-Za-z0-9_]*') {
+        return "powershell"
+    }
+    if ($Question -match '(?i)^(#!/|curl\b|bash\b|sh\b|zsh\b|sudo\b|chmod\b|export\b|apt(-get)?\b|brew\b|npm\b|pnpm\b|yarn\b|python3?\b)') {
+        return "shell"
+    }
+    if ($Question -match "`n") {
+        return "technical"
+    }
+    return "plain"
+}
+
+function Test-ShouldSimplifyInteractionQuestion {
+    param([string]$Question)
+
+    if (-not $Question) {
+        return $false
+    }
+    $lines = @(
+        ($Question -split "`r?`n") |
+            ForEach-Object { $_.Trim() } |
+            Where-Object { $_ }
+    )
+    if ($lines.Count -eq 0) {
+        return $false
+    }
+    if ($lines.Count -le 3 -and $Question.Length -le 180) {
+        $codeLike = $false
+        foreach ($line in $lines) {
+            if (Test-InteractionLineLooksCodeLike $line) {
+                $codeLike = $true
+                break
+            }
+        }
+        if (-not $codeLike) {
+            return $false
+        }
+    }
+    if ($lines.Count -ge 6 -or $Question.Length -ge 260) {
+        return $true
+    }
+    foreach ($line in $lines) {
+        if ((Test-InteractionLineLooksCodeLike $line) -and ($lines.Count -gt 1 -or $Question.Length -gt 140)) {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Format-InteractionQuestion {
+    param(
+        [string]$Question,
+        [string]$DisplayQuestion = ""
+    )
+
+    if ($DisplayQuestion) {
+        return $DisplayQuestion
+    }
+    if (-not (Test-ShouldSimplifyInteractionQuestion $Question)) {
+        return $Question
+    }
+
+    $kind = Get-InteractionQuestionKind $Question
+    $lead = Get-InteractionLeadLine $Question
+    $headline = switch ($kind) {
+        "powershell" { Get-LangText "智能体想让你确认一段 PowerShell 脚本或命令。" "The agent wants you to review a PowerShell script or command." }
+        "shell" { Get-LangText "智能体想让你确认一段 Shell 脚本或命令。" "The agent wants you to review a shell script or command." }
+        "json" { Get-LangText "智能体想让你确认一段配置或 JSON 内容。" "The agent wants you to review a config or JSON snippet." }
+        default { Get-LangText "智能体发来了一段较长的技术内容，想请你确认或补充信息。" "The agent is asking about a longer technical snippet." }
+    }
+    $lines = New-Object System.Collections.Generic.List[string]
+    $lines.Add($headline) | Out-Null
+    if ($lead) {
+        $focusPrefix = Get-LangText "重点" "Focus"
+        $lines.Add(("{0}: {1}" -f $focusPrefix, (Get-ShortInteractionText -Text $lead -Limit 88))) | Out-Null
+    }
+    $lines.Add((Get-LangText "已简化显示，后台仍保留完整技术细节。" "Simplified for display; the full technical text is still preserved in the background.")) | Out-Null
+    return ($lines -join [Environment]::NewLine)
+}
+
 $script:UxInvitePrompt = Get-UxText -Path "onboarding.invite_prompt.text" -Fallback "Please enter your invite or worker code / 请输入邀请码或 Worker 接入码:"
 $script:UxInviteRequiredRedirected = Get-UxText -Path "onboarding.invite_required_noninteractive.text" -Fallback "Invite or worker code is required but stdin is redirected / 需要邀请码或 Worker 接入码但标准输入被重定向"
 $script:UxInviteRequired = Get-UxText -Path "onboarding.invite_required.text" -Fallback "Invite or worker code is required / 需要邀请码或 Worker 接入码"
@@ -1535,6 +1685,7 @@ function Write-PendingInteractionFile {
         [string]$InteractionType,
         [string]$InteractionLevel,
         [string]$InteractionPhase,
+        [string]$DisplayQuestion = "",
         [string]$ActiveTaskId = $script:ActiveTaskId
     )
 
@@ -1544,6 +1695,7 @@ function Write-PendingInteractionFile {
         interaction_type = $InteractionType
         interaction_level = $InteractionLevel
         interaction_phase = $InteractionPhase
+        display_question = $DisplayQuestion
         active_task_id = $ActiveTaskId
         updated_at = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
     }
@@ -2880,8 +3032,11 @@ function Handle-Interaction {
         [string]$Question,
         [string]$InteractionType = "info_request",
         [string]$InteractionLevel = "info",
-        [string]$InteractionPhase = "progress"
+        [string]$InteractionPhase = "progress",
+        [string]$DisplayQuestion = ""
     )
+
+    $renderedQuestion = Format-InteractionQuestion -Question $Question -DisplayQuestion $DisplayQuestion
 
     if ($InteractionType -eq "notification") {
         Show-AgentNotification -Phase $InteractionPhase -Level $InteractionLevel -Message $Question
@@ -2898,8 +3053,9 @@ function Handle-Interaction {
             -Question $Question `
             -InteractionType $InteractionType `
             -InteractionLevel $InteractionLevel `
-            -InteractionPhase $InteractionPhase
-        Write-SessionStatus -Phase $InteractionPhase -Level $InteractionLevel -Message $Question
+            -InteractionPhase $InteractionPhase `
+            -DisplayQuestion $DisplayQuestion
+        Write-SessionStatus -Phase $InteractionPhase -Level $InteractionLevel -Message $renderedQuestion
 
         $answerPayload = Get-JsonFileObject -Path $script:InteractionAnswerFile
         if ($answerPayload -and $answerPayload.interaction_id -eq $InteractionId -and $answerPayload.answer) {
@@ -2916,7 +3072,7 @@ function Handle-Interaction {
     }
 
     Write-Host ""
-    Write-Host ">>> [$script:UxInteractionTitle]: $Question"
+    Write-Host ">>> [$script:UxInteractionTitle]: $renderedQuestion"
     try {
         $answerPrompt = Read-ConsoleLine -Prompt $script:UxInteractionPrompt -AllowDisconnectHotkey $true
     } catch {
@@ -2958,7 +3114,9 @@ function Show-TaskCompletionCard {
         [object]$BudgetUsdTotal = $null,
         [string]$ReferralCode = "",
         [string]$ShareText = "",
-        [string]$TaskMessage = ""
+        [string]$TaskMessage = "",
+        [string]$BudgetWarning = "",
+        [string]$BudgetBindingIncentive = ""
     )
 
     Refresh-WindowTitle
@@ -2975,6 +3133,14 @@ function Show-TaskCompletionCard {
         }
         if ($null -ne $BudgetUsdRemaining -or $null -ne $BudgetUsdTotal) {
             Write-Host "  $(Get-LangText '金额额度' 'Amount budget'): $(Format-AmountBudgetRemainingLine -Remaining $BudgetUsdRemaining -Total $BudgetUsdTotal)" -ForegroundColor DarkGray
+        }
+
+        if ($BudgetWarning) {
+            Write-Host ""
+            Write-Host "  ⚠ $BudgetWarning" -ForegroundColor Yellow
+            if ($BudgetBindingIncentive) {
+                Write-Host "  💡 $BudgetBindingIncentive" -ForegroundColor Yellow
+            }
         }
 
         if ($ReferralCode) {
@@ -3599,8 +3765,11 @@ function Attach-HandlePendingInteraction {
         return $false
     }
 
+    $displayQuestion = if ($payload.display_question) { [string]$payload.display_question } else { "" }
+    $renderedQuestion = Format-InteractionQuestion -Question ([string]$payload.question) -DisplayQuestion $displayQuestion
+
     Write-Host ""
-    Write-Host ">>> [$script:UxInteractionTitle]: $($payload.question)"
+    Write-Host ">>> [$script:UxInteractionTitle]: $renderedQuestion"
     $answerPrompt = Read-ConsoleLine -Prompt $script:UxInteractionPrompt -AllowDisconnectHotkey $true
     if ($answerPrompt.action -eq "exit_ui") {
         $script:UiExitRequested = $true
@@ -3664,7 +3833,9 @@ function Attach-HandleTaskCompletion {
         -BudgetUsdTotal $payload.budget_usd_total `
         -ReferralCode ([string]$payload.referral_code) `
         -ShareText ([string]$payload.share_text) `
-        -TaskMessage ([string]$payload.task_message)
+        -TaskMessage ([string]$payload.task_message) `
+        -BudgetWarning ([string]$payload.budget_warning) `
+        -BudgetBindingIncentive ([string]$payload.budget_binding_incentive)
     Prompt-PostTaskFeedback -TaskId $taskId
     Clear-TaskRuntimeState
     return $true
@@ -4003,12 +4174,17 @@ try {
                     $InteractionRetryAfter.Remove($pollResponse.interaction_id) | Out-Null
                 }
 
+                $displayQuestion = ""
+                if ($pollResponse.interaction_context -and $pollResponse.interaction_context.display_question) {
+                    $displayQuestion = [string]$pollResponse.interaction_context.display_question
+                }
                 $handleStatus = Handle-Interaction `
                     -InteractionId $pollResponse.interaction_id `
                     -Question $pollResponse.question `
                     -InteractionType ([string]$pollResponse.interaction_type) `
                     -InteractionLevel ([string]$pollResponse.interaction_level) `
-                    -InteractionPhase ([string]$pollResponse.interaction_phase)
+                    -InteractionPhase ([string]$pollResponse.interaction_phase) `
+                    -DisplayQuestion $displayQuestion
                 if ($handleStatus -eq 0) {
                     $InteractionRetryAfter.Remove($pollResponse.interaction_id) | Out-Null
                     $AnsweredInteractions.Add($pollResponse.interaction_id) | Out-Null
@@ -4064,7 +4240,9 @@ try {
                         -BudgetUsdTotal $pollResponse.notif_budget_usd_total `
                         -ReferralCode ([string]$pollResponse.notif_referral_code) `
                         -ShareText ([string]$pollResponse.notif_share_text) `
-                        -TaskMessage ([string]$pollResponse.notif_task_message)
+                        -TaskMessage ([string]$pollResponse.notif_task_message) `
+                        -BudgetWarning ([string]$pollResponse.budget_warning) `
+                        -BudgetBindingIncentive ([string]$pollResponse.budget_binding_incentive)
                     Prompt-PostTaskFeedback -TaskId ([string]$pollResponse.notif_task_id)
                     Show-TaskMenu
                 }

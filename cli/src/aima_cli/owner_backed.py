@@ -182,6 +182,7 @@ class BackgroundOwner:
                             interaction_type=interaction_type,
                             interaction_level=str(payload.get("interaction_level") or "info"),
                             interaction_phase=str(payload.get("interaction_phase") or "waiting"),
+                            interaction_context=payload.get("interaction_context"),
                         )
                         self.runtime.write_session_status(
                             phase=str(payload.get("interaction_phase") or "waiting"),
@@ -345,22 +346,66 @@ class OwnerBackedAttachedRunner:
         assert self.session.manifest is not None
         block = self.session.manifest.block("interaction_prompt")
         question = str(payload.get("question") or "")
-        self.session.renderer.render_interaction(question, block)
-        try:
-            answer = (await self.session.input_provider.prompt(f"{block.prompt.localized(self._lang)}\n> ")).strip()
-        except InputClosedError:
-            raise
-        if not answer:
-            self.attach_deferred_interaction_id = interaction_id
-            self.attach_deferred_interaction_retry_at = now + self.interaction_retry_after_seconds
-            self.session.renderer.warn(
-                block.context_text_localized(
-                    "skip_notice",
-                    self._lang,
-                    "Skipped; the question stays pending.",
+        interaction_type = str(payload.get("interaction_type") or "")
+        interaction_context = payload.get("interaction_context")
+
+        is_approval = interaction_type == "approval"
+        if is_approval:
+            self.session.renderer.render_approval(interaction_context, question)
+        else:
+            self.session.renderer.render_interaction(question, block, context=interaction_context)
+
+        if is_approval:
+            _APPROVE_INPUTS = ("y", "yes", "approve", "ok")
+            _DENY_INPUTS = ("n", "no", "deny", "reject")
+            answer = ""
+            for _attempt in range(5):
+                try:
+                    raw = (await self.session.input_provider.prompt("[Y/N] > ")).strip()
+                except InputClosedError:
+                    raise
+                if not raw:
+                    self.attach_deferred_interaction_id = interaction_id
+                    self.attach_deferred_interaction_retry_at = now + self.interaction_retry_after_seconds
+                    self.session.renderer.warn(
+                        block.context_text_localized(
+                            "skip_notice",
+                            self._lang,
+                            "Skipped; the question stays pending.",
+                        )
+                    )
+                    return True
+                lowered = raw.lower()
+                if lowered in _APPROVE_INPUTS:
+                    answer = "approved"
+                    break
+                elif lowered in _DENY_INPUTS:
+                    answer = "denied"
+                    break
+                else:
+                    hint = "请输入 Y（批准）或 N（拒绝）" if self._lang == "zh_cn" else "Please enter Y (approve) or N (deny)"
+                    self.session.renderer.warn(hint)
+            else:
+                answer = "denied"
+                denied_hint = "多次无效输入，已自动拒绝" if self._lang == "zh_cn" else "Too many invalid inputs, auto-denied"
+                self.session.renderer.warn(denied_hint)
+        else:
+            try:
+                prompt_text = f"{block.prompt.localized(self._lang)}\n> "
+                answer = (await self.session.input_provider.prompt(prompt_text)).strip()
+            except InputClosedError:
+                raise
+            if not answer:
+                self.attach_deferred_interaction_id = interaction_id
+                self.attach_deferred_interaction_retry_at = now + self.interaction_retry_after_seconds
+                self.session.renderer.warn(
+                    block.context_text_localized(
+                        "skip_notice",
+                        self._lang,
+                        "Skipped; the question stays pending.",
+                    )
                 )
-            )
-            return True
+                return True
         self.attach_last_interaction_id = interaction_id
         self.attach_deferred_interaction_id = ""
         self.attach_deferred_interaction_retry_at = 0.0

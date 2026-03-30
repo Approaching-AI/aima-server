@@ -72,6 +72,7 @@ class AttachedDeviceSession:
     _CHINESE_SOFTWARE_CONTEXT_RE = re.compile(r"(安装|装|配置|部署|升级|修复|修一下|检查|排查|诊断)\s*$")
     _INSTALL_HINT_RE = re.compile(r"(?i)\b(install|setup|deploy|upgrade)\b|安装|配置|部署|升级")
     _REPAIR_HINT_RE = re.compile(r"(?i)\b(repair|fix|check|debug|troubleshoot|diagnose)\b|修复|检查|排查|诊断|升级一下|修一下")
+    _VERIFY_HINT_RE = re.compile(r"(?i)\b(test|verify|validation|smoke\s*test|benchmark)\b|测试|验证|验收|跑测")
     _SOFTWARE_HINT_IGNORES = {
         "aima",
         "api",
@@ -125,6 +126,7 @@ class AttachedDeviceSession:
         (re.compile(r"(?i)\bdify\b"), "dify"),
         (re.compile(r"(?i)\bopen[\s._-]*webui\b"), "open-webui"),
         (re.compile(r"(?i)\bcomfy[\s._-]*ui\b"), "comfyui"),
+        (re.compile(r"(?i)\bk[\s._-]*transformers\b"), "ktransformers"),
     )
     _KNOWN_SOFTWARE_TARGET_ALIASES = {
         "openclaw": "openclaw",
@@ -133,7 +135,35 @@ class AttachedDeviceSession:
         "openwebui": "open-webui",
         "webui": "open-webui",
         "comfyui": "comfyui",
+        "ktransformers": "ktransformers",
+        "k-transformers": "ktransformers",
+        "k_transformers": "ktransformers",
     }
+    _KTRANSFORMERS_DEPLOYMENT_RE = re.compile(
+        r"(?i)\b(model|deploy|deployment|serve|serving|load|gguf|awq|gptq|fp8|fp16|int4|int8)\b|模型|部署|加载|量化"
+    )
+    _KTRANSFORMERS_TEST_RE = re.compile(
+        r"(?i)\b(test|verify|validation|smoke\s*test|benchmark|inference)\b|测试|验证|验收|推理|跑测"
+    )
+    _KTRANSFORMERS_MODEL_NAME_RE = re.compile(
+        r"(?i)\b((?:qwen|llama|deepseek|mistral|mixtral|phi|gemma|baichuan|glm|internlm|yi)[a-z0-9._/-]*\s*\d+(?:\.\d+)?\s*[bm])\b"
+    )
+    _KTRANSFORMERS_MODEL_FORMATS: tuple[tuple[re.Pattern[str], str], ...] = (
+        (re.compile(r"(?i)\bgguf\b"), "gguf"),
+        (re.compile(r"(?i)\bawq\b"), "awq"),
+        (re.compile(r"(?i)\bgptq\b"), "gptq"),
+    )
+    _KTRANSFORMERS_QUANTIZATION_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+        (re.compile(r"(?i)\bawq\b"), "awq"),
+        (re.compile(r"(?i)\bgptq\b"), "gptq"),
+        (re.compile(r"(?i)\bfp8\b"), "fp8"),
+        (re.compile(r"(?i)\bfp16\b"), "fp16"),
+        (re.compile(r"(?i)\bint4\b|\b4[- ]?bit\b"), "int4"),
+        (re.compile(r"(?i)\bint8\b|\b8[- ]?bit\b"), "int8"),
+    )
+    _KTRANSFORMERS_GPU_RE = re.compile(
+        r"(?i)\bgpu\b|\bcuda\b|\b(?:rtx\s*)?(?:4090|3090|5090|a100|h100|v100|l40s)\b|显卡|GPU|CUDA"
+    )
 
     def __init__(
         self,
@@ -558,7 +588,7 @@ class AttachedDeviceSession:
             return True
 
         block = self.manifest.block("interaction_prompt")
-        self.renderer.render_interaction(question, block)
+        self.renderer.render_interaction(question, block, context=payload.get("interaction_context"))
         lang = self._lang
         answer = (await self.input_provider.prompt(f"{block.prompt.localized(lang)}\n> ")).strip()
         if not answer:
@@ -715,7 +745,8 @@ class AttachedDeviceSession:
 
     def _normalize_target_hint(self, value: str) -> str:
         cleaned = re.sub(r"[^a-z0-9._+-]+", "_", value.lower()).strip("._-")
-        return cleaned[:120]
+        canonical = self._KNOWN_SOFTWARE_TARGET_ALIASES.get(cleaned, cleaned)
+        return canonical[:120]
 
     def _infer_software_hint(self, *values: str) -> str:
         for raw_value in values:
@@ -792,13 +823,89 @@ class AttachedDeviceSession:
             return "software_install"
         if mode == "repair_software":
             return "software_repair"
+        if mode == "install_deploy_ktransformers":
+            return "software_install"
+        if mode == "test_ktransformers":
+            return "verification"
 
         combined = " ".join(value for value in (user_request, description) if value)
         if self._INSTALL_HINT_RE.search(combined):
             return "software_install"
         if self._REPAIR_HINT_RE.search(combined):
             return "software_repair"
+        if self._VERIFY_HINT_RE.search(combined):
+            return "verification"
         return "general_ops"
+
+    def _infer_ktransformers_task_hints(
+        self,
+        *,
+        mode: str,
+        user_request: str,
+        description: str,
+        software_hint: str,
+        task_type_hint: str,
+    ) -> tuple[str, dict[str, Any], dict[str, Any]]:
+        if software_hint != "ktransformers":
+            return task_type_hint, {}, {}
+
+        combined = "\n".join(part for part in (user_request, description) if part).strip()
+        if not combined:
+            return task_type_hint, {}, {}
+
+        effective_task_type = task_type_hint
+        test_match = self._KTRANSFORMERS_TEST_RE.search(combined)
+        deploy_match = self._KTRANSFORMERS_DEPLOYMENT_RE.search(combined)
+        if mode == "test_ktransformers":
+            effective_task_type = "verification"
+        elif mode == "install_deploy_ktransformers":
+            effective_task_type = "software_install"
+        elif test_match and (
+            effective_task_type == "verification"
+            or deploy_match is None
+            or test_match.start() <= deploy_match.start()
+        ):
+            effective_task_type = "verification"
+
+        if effective_task_type == "software_install":
+            deployment_kind = "ktransformers_model_deploy"
+        elif effective_task_type == "verification":
+            deployment_kind = "ktransformers_test"
+        elif test_match:
+            effective_task_type = "verification"
+            deployment_kind = "ktransformers_test"
+        elif deploy_match:
+            effective_task_type = "software_install"
+            deployment_kind = "ktransformers_model_deploy"
+        else:
+            return effective_task_type, {}, {}
+
+        intake_hints: dict[str, Any] = {"deployment_kind": deployment_kind}
+        search_hints: dict[str, Any] = {"deployment_kind": deployment_kind}
+
+        model_name_match = self._KTRANSFORMERS_MODEL_NAME_RE.search(combined)
+        if model_name_match:
+            model_name = " ".join(model_name_match.group(1).split()).lower()
+            intake_hints["model_name"] = model_name
+            search_hints["model_name"] = model_name
+
+        for pattern, model_format in self._KTRANSFORMERS_MODEL_FORMATS:
+            if pattern.search(combined):
+                intake_hints["model_format"] = model_format
+                search_hints["model_format"] = model_format
+                break
+
+        for pattern, quantization in self._KTRANSFORMERS_QUANTIZATION_PATTERNS:
+            if pattern.search(combined):
+                intake_hints["quantization"] = quantization
+                search_hints["quantization"] = quantization
+                break
+
+        if self._KTRANSFORMERS_GPU_RE.search(combined):
+            intake_hints["gpu_required"] = True
+            search_hints["gpu_required"] = True
+
+        return effective_task_type, intake_hints, search_hints
 
     def _build_task_submission(
         self,
@@ -831,6 +938,20 @@ class AttachedDeviceSession:
             experience_search["target_hint"] = software_hint
         if task_type_hint == "software_repair" and user_request:
             experience_search["error_message_hint"] = user_request[:1000]
+
+        task_type_hint, deployment_intake_hints, deployment_search_hints = self._infer_ktransformers_task_hints(
+            mode=mode,
+            user_request=user_request,
+            description=description,
+            software_hint=software_hint,
+            task_type_hint=task_type_hint,
+        )
+        experience_search["task_type_hint"] = task_type_hint
+        if deployment_intake_hints:
+            intake.update(deployment_intake_hints)
+        if deployment_search_hints:
+            experience_search.update(deployment_search_hints)
+
         return TaskSubmission(
             description=description,
             intake=intake,

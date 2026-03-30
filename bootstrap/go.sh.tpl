@@ -436,6 +436,146 @@ ux_manifest_text_lang() {
     fi
 }
 
+shorten_interaction_text() {
+    local text="${1:-}"
+    local limit="${2:-88}"
+    if [ "${#text}" -le "$limit" ]; then
+        printf '%s' "$text"
+        return
+    fi
+    printf '%s...' "${text:0:$((limit - 3))}"
+}
+
+interaction_line_looks_code_like() {
+    local line=""
+    line="$(printf '%s' "${1:-}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+    [ -z "$line" ] && return 1
+    case "$line" in
+        '```'*|'{'*|'['*|'PS '*|'> '*|'$ '*|'#!'*)
+            return 0
+            ;;
+    esac
+    if printf '%s' "$line" | grep -Eqi '^[ $A-Za-z_][A-Za-z0-9_:. -]*='; then
+        return 0
+    fi
+    if printf '%s' "$line" | grep -Eqi '(Invoke-RestMethod|Write-Output|ConvertTo-Json|Start-Process|Read-Host|Get-[A-Za-z]+|Set-[A-Za-z]+)|(^|[[:space:]])\$env:|(^|[[:space:]])\$[A-Za-z_][A-Za-z0-9_]*'; then
+        return 0
+    fi
+    if printf '%s' "$line" | grep -Eqi '^(#!/|curl\b|bash\b|sh\b|zsh\b|sudo\b|chmod\b|export\b|apt(-get)?\b|brew\b|npm\b|pnpm\b|yarn\b|python3?\b)'; then
+        return 0
+    fi
+    return 1
+}
+
+extract_interaction_lead_line() {
+    local question="${1:-}"
+    local line="" trimmed=""
+    while IFS= read -r line; do
+        trimmed="$(printf '%s' "$line" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//; s/[:：]$//')"
+        [ -z "$trimmed" ] && continue
+        if interaction_line_looks_code_like "$trimmed"; then
+            continue
+        fi
+        printf '%s' "$trimmed"
+        return 0
+    done <<< "$question"
+    return 0
+}
+
+interaction_question_kind() {
+    local question="${1:-}"
+    local stripped=""
+    stripped="$(printf '%s' "$question" | sed 's/^[[:space:]]*//')"
+    if printf '%s' "$stripped" | grep -Eq '^[\[{]' && printf '%s' "$stripped" | grep -Eq '[:\{\[]'; then
+        printf 'json'
+        return
+    fi
+    if printf '%s' "$question" | grep -Eqi '(Invoke-RestMethod|Write-Output|ConvertTo-Json|Start-Process|Read-Host|Get-[A-Za-z]+|Set-[A-Za-z]+)|(^|[[:space:]])\$env:|(^|[[:space:]])\$[A-Za-z_][A-Za-z0-9_]*'; then
+        printf 'powershell'
+        return
+    fi
+    if printf '%s' "$question" | grep -Eqi '^(#!/|curl\b|bash\b|sh\b|zsh\b|sudo\b|chmod\b|export\b|apt(-get)?\b|brew\b|npm\b|pnpm\b|yarn\b|python3?\b)'; then
+        printf 'shell'
+        return
+    fi
+    case "$question" in
+        *$'\n'*)
+            printf 'technical'
+            return
+            ;;
+    esac
+    printf 'plain'
+}
+
+should_simplify_interaction_question() {
+    local question="${1:-}"
+    local stripped="" line_count=0 char_count=0 line=""
+    stripped="$(printf '%s' "$question" | sed '/^[[:space:]]*$/d')"
+    [ -z "$stripped" ] && return 1
+    line_count="$(printf '%s\n' "$stripped" | awk 'NF {count++} END {print count+0}')"
+    char_count="${#question}"
+    if [ "$line_count" -le 3 ] && [ "$char_count" -le 180 ]; then
+        local code_like=0
+        while IFS= read -r line; do
+            [ -z "$(printf '%s' "$line" | tr -d '[:space:]')" ] && continue
+            if interaction_line_looks_code_like "$line"; then
+                code_like=1
+                break
+            fi
+        done <<< "$stripped"
+        [ "$code_like" -eq 0 ] && return 1
+    fi
+    if [ "$line_count" -ge 6 ] || [ "$char_count" -ge 260 ]; then
+        return 0
+    fi
+    while IFS= read -r line; do
+        [ -z "$(printf '%s' "$line" | tr -d '[:space:]')" ] && continue
+        if interaction_line_looks_code_like "$line" && { [ "$line_count" -gt 1 ] || [ "$char_count" -gt 140 ]; }; then
+            return 0
+        fi
+    done <<< "$stripped"
+    return 1
+}
+
+format_interaction_question() {
+    local question="${1:-}"
+    local display_question="${2:-}"
+    if [ -n "$display_question" ]; then
+        printf '%s' "$display_question"
+        return
+    fi
+    if ! should_simplify_interaction_question "$question"; then
+        printf '%s' "$question"
+        return
+    fi
+
+    local kind="" lead="" headline="" focus_prefix="" note=""
+    kind="$(interaction_question_kind "$question")"
+    lead="$(extract_interaction_lead_line "$question")"
+    case "$kind" in
+        powershell)
+            headline="$(lang_text "智能体想让你确认一段 PowerShell 脚本或命令。" "The agent wants you to review a PowerShell script or command.")"
+            ;;
+        shell)
+            headline="$(lang_text "智能体想让你确认一段 Shell 脚本或命令。" "The agent wants you to review a shell script or command.")"
+            ;;
+        json)
+            headline="$(lang_text "智能体想让你确认一段配置或 JSON 内容。" "The agent wants you to review a config or JSON snippet.")"
+            ;;
+        *)
+            headline="$(lang_text "智能体发来了一段较长的技术内容，想请你确认或补充信息。" "The agent is asking about a longer technical snippet.")"
+            ;;
+    esac
+    focus_prefix="$(lang_text "重点" "Focus")"
+    note="$(lang_text "已简化显示，后台仍保留完整技术细节。" "Simplified for display; the full technical text is still preserved in the background.")"
+
+    printf '%s' "$headline"
+    if [ -n "$lead" ]; then
+        printf '\n%s: %s' "$focus_prefix" "$(shorten_interaction_text "$lead" 88)"
+    fi
+    printf '\n%s' "$note"
+}
+
 UX_INVITE_PROMPT="$(ux_manifest_text "onboarding.invite_prompt.text" "Please enter your invite or worker code 请输入邀请码或 Worker 接入码:")"
 UX_INVITE_REQUIRED_NONINTERACTIVE="$(ux_manifest_text "onboarding.invite_required_noninteractive.text" "Invite or worker code is required but no interactive terminal is available 需要邀请码或 Worker 接入码，但当前无法交互输入")"
 UX_INVITE_REQUIRED="$(ux_manifest_text "onboarding.invite_required.text" "Invite or worker code is required 需要邀请码或 Worker 接入码")"
@@ -1927,15 +2067,17 @@ write_pending_interaction_file() {
     local interaction_type="${3:-info_request}"
     local interaction_level="${4:-info}"
     local interaction_phase="${5:-progress}"
-    local active_task_id="${6:-${ACTIVE_TASK_ID:-}}"
-    local escaped_id escaped_question escaped_type escaped_level escaped_phase escaped_task
+    local display_question="${6:-}"
+    local active_task_id="${7:-${ACTIVE_TASK_ID:-}}"
+    local escaped_id escaped_question escaped_type escaped_level escaped_phase escaped_display escaped_task
     escaped_id="$(json_escape "$interaction_id")"
     escaped_question="$(json_escape "$question")"
     escaped_type="$(json_escape "$interaction_type")"
     escaped_level="$(json_escape "$interaction_level")"
     escaped_phase="$(json_escape "$interaction_phase")"
+    escaped_display="$(json_escape "$display_question")"
     escaped_task="$(json_escape "$active_task_id")"
-    write_runtime_file "$PENDING_INTERACTION_FILE" "{\"interaction_id\":\"${escaped_id}\",\"question\":\"${escaped_question}\",\"interaction_type\":\"${escaped_type}\",\"interaction_level\":\"${escaped_level}\",\"interaction_phase\":\"${escaped_phase}\",\"active_task_id\":\"${escaped_task}\",\"updated_at\":\"$(date +%s)\"}"
+    write_runtime_file "$PENDING_INTERACTION_FILE" "{\"interaction_id\":\"${escaped_id}\",\"question\":\"${escaped_question}\",\"interaction_type\":\"${escaped_type}\",\"interaction_level\":\"${escaped_level}\",\"interaction_phase\":\"${escaped_phase}\",\"display_question\":\"${escaped_display}\",\"active_task_id\":\"${escaped_task}\",\"updated_at\":\"$(date +%s)\"}"
 }
 
 clear_pending_interaction_file() {
@@ -3083,7 +3225,7 @@ attach_show_status_if_changed() {
 
 attach_handle_pending_interaction() {
     local current_active_task_id="${1:-}"
-    local payload="" interaction_id="" question="" interaction_type="" interaction_level="" interaction_phase="" pending_task_id="" now=""
+    local payload="" interaction_id="" question="" interaction_type="" interaction_level="" interaction_phase="" display_question="" rendered_question="" pending_task_id="" now=""
     payload="$(runtime_read_file "$PENDING_INTERACTION_FILE" || true)"
     interaction_id="$(json_str interaction_id "$payload")"
     [ -n "$interaction_id" ] || return 1
@@ -3101,9 +3243,11 @@ attach_handle_pending_interaction() {
     interaction_type="$(json_str interaction_type "$payload")"
     interaction_level="$(json_str interaction_level "$payload")"
     interaction_phase="$(json_str interaction_phase "$payload")"
+    display_question="$(json_str display_question "$payload")"
+    rendered_question="$(format_interaction_question "$question" "$display_question")"
 
     printf '\n\033[2m─── %s ──────────────────────────────────\033[0m\n' "$UX_INTERACTION_TITLE"
-    printf '  \033[33m%s\033[0m\n' "$question"
+    printf '  \033[33m%s\033[0m\n' "$rendered_question"
     printf '  \033[36m%s\033[0m\n  \033[36m>\033[0m ' "$UX_INTERACTION_PROMPT"
     local answer=""
     read_tty_with_hotkeys 1 || true
@@ -3300,6 +3444,10 @@ handle_interaction() {
     local interaction_type="${3:-info_request}"
     local interaction_level="${4:-info}"
     local interaction_phase="${5:-progress}"
+    local display_question="${6:-}"
+    local rendered_question=""
+
+    rendered_question="$(format_interaction_question "$question" "$display_question")"
 
     if [ "$interaction_type" = "notification" ]; then
         render_agent_notification "$interaction_phase" "$interaction_level" "$question"
@@ -3327,13 +3475,13 @@ handle_interaction() {
             warn "$(lang_text "回答发送失败，将重试。" "Failed to send deferred answer; will retry.")"
             return 10
         fi
-        write_pending_interaction_file "$interaction_id" "$question" "$interaction_type" "$interaction_level" "$interaction_phase"
-        write_session_status "$interaction_phase" "$interaction_level" "$question"
+        write_pending_interaction_file "$interaction_id" "$question" "$interaction_type" "$interaction_level" "$interaction_phase" "$display_question"
+        write_session_status "$interaction_phase" "$interaction_level" "$rendered_question"
         return 5
     fi
 
     printf '\n\033[2m─── Agent 智能体 ──────────────────────────────────\033[0m\n'
-    printf '  \033[33m%s\033[0m\n' "$question"
+    printf '  \033[33m%s\033[0m\n' "$rendered_question"
 
     if ! tty_available; then
         warn "$(lang_text "当前终端不可交互，稍后会再次提问。" "Non-interactive terminal; will retry this question later.")"
@@ -3468,7 +3616,7 @@ exec_main_loop() {
             sync_active_task_from_platform || true
         fi
 
-        local command_id raw_command command_encoding command_timeout command_intent interaction_id question interaction_type interaction_level interaction_phase
+        local command_id raw_command command_encoding command_timeout command_intent interaction_id question interaction_type interaction_level interaction_phase display_question
         command_id="$(json_str command_id "$resp")"
         raw_command="$(json_str command "$resp")"
         command_encoding="$(json_str command_encoding "$resp")"
@@ -3480,6 +3628,7 @@ exec_main_loop() {
         interaction_type="$(json_str interaction_type "$resp")"
         interaction_level="$(json_str interaction_level "$resp")"
         interaction_phase="$(json_str interaction_phase "$resp")"
+        display_question="$(json_str "interaction_context.display_question" "$resp")"
 
         # ── Agent conversation (TTY-exclusive) ─────────────
         if [ -n "$interaction_id" ] && [ -n "$question" ]; then
@@ -3499,7 +3648,7 @@ exec_main_loop() {
                 continue
             fi
 
-            if handle_interaction "$interaction_id" "$question" "$interaction_type" "$interaction_level" "$interaction_phase"; then
+            if handle_interaction "$interaction_id" "$question" "$interaction_type" "$interaction_level" "$interaction_phase" "$display_question"; then
                 clear_interaction_retry "$interaction_id"
                 answered_interactions="${answered_interactions} ${interaction_id}"
             else

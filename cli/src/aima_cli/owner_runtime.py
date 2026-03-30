@@ -172,18 +172,19 @@ class CliRuntimeStore:
         interaction_type: str,
         interaction_level: str,
         interaction_phase: str,
+        interaction_context: dict[str, Any] | None = None,
     ) -> None:
-        _write_json(
-            self.paths.pending_interaction_path,
-            {
-                "interaction_id": interaction_id,
-                "question": question,
-                "interaction_type": interaction_type,
-                "interaction_level": interaction_level,
-                "interaction_phase": interaction_phase,
-                "updated_at": int(time.time()),
-            },
-        )
+        data: dict[str, Any] = {
+            "interaction_id": interaction_id,
+            "question": question,
+            "interaction_type": interaction_type,
+            "interaction_level": interaction_level,
+            "interaction_phase": interaction_phase,
+            "updated_at": int(time.time()),
+        }
+        if interaction_context:
+            data["interaction_context"] = interaction_context
+        _write_json(self.paths.pending_interaction_path, data)
 
     def read_pending_interaction(self) -> dict[str, Any]:
         return _read_json(self.paths.pending_interaction_path)

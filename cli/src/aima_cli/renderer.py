@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 from typing import TextIO
 
@@ -11,6 +12,119 @@ _NOTIFICATION_PREFIXES = {
     "zh_cn": {"update": "更新", "result": "结果", "waiting": "等待", "action": "操作", "warning": "警告", "error": "错误"},
     "en_us": {"update": "Update", "result": "Result", "waiting": "Waiting", "action": "Action", "warning": "Warning", "error": "Error"},
 }
+
+_INTERACTION_POWERSHELL_RE = re.compile(
+    r"(?im)\b(Invoke-RestMethod|Write-Output|ConvertTo-Json|Start-Process|Read-Host|Get-[A-Za-z]+|Set-[A-Za-z]+)\b|"
+    r"(^|\s)\$env:|(^|\s)\$[A-Za-z_][A-Za-z0-9_]*"
+)
+_INTERACTION_SHELL_RE = re.compile(
+    r"(?im)^(#!/|curl\b|bash\b|sh\b|zsh\b|sudo\b|chmod\b|export\b|apt(-get)?\b|brew\b|npm\b|pnpm\b|yarn\b|python3?\b)"
+)
+_INTERACTION_JSON_RE = re.compile(r"^\s*[\[{]")
+_INTERACTION_ASSIGNMENT_RE = re.compile(r"^\s*[$A-Za-z_][A-Za-z0-9_:. -]*\s*=")
+
+
+def _shorten_text(text: str, limit: int = 88) -> str:
+    stripped = text.strip()
+    if len(stripped) <= limit:
+        return stripped
+    return stripped[: max(0, limit - 3)].rstrip() + "..."
+
+
+def _interaction_line_looks_code_like(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return False
+    if stripped.startswith(("```", "{", "[", "PS ", ">", "$ ", "#!/")):
+        return True
+    if _INTERACTION_ASSIGNMENT_RE.match(stripped):
+        return True
+    if _INTERACTION_POWERSHELL_RE.search(stripped):
+        return True
+    if _INTERACTION_SHELL_RE.search(stripped):
+        return True
+    if sum(stripped.count(ch) for ch in "{}[]()=;|$`") >= 3:
+        return True
+    return False
+
+
+def _extract_interaction_lead_line(question: str) -> str:
+    for raw_line in question.splitlines():
+        line = raw_line.strip()
+        if not line or _interaction_line_looks_code_like(line):
+            continue
+        return line.rstrip(":：")
+    return ""
+
+
+def _interaction_question_kind(question: str) -> str:
+    stripped = question.strip()
+    if _INTERACTION_JSON_RE.match(stripped) and any(token in stripped for token in ('":', "{", "[")):
+        return "json"
+    if _INTERACTION_POWERSHELL_RE.search(question):
+        return "powershell"
+    if _INTERACTION_SHELL_RE.search(question):
+        return "shell"
+    if "\n" in question:
+        return "technical"
+    return "plain"
+
+
+def _should_simplify_interaction(question: str) -> bool:
+    stripped = question.strip()
+    if not stripped:
+        return False
+    lines = [line for line in stripped.splitlines() if line.strip()]
+    line_count = len(lines)
+    char_count = len(stripped)
+    if line_count <= 3 and char_count <= 180 and not any(_interaction_line_looks_code_like(line) for line in lines):
+        return False
+    if line_count >= 6 or char_count >= 260:
+        return True
+    return any(_interaction_line_looks_code_like(line) for line in lines) and (line_count > 1 or char_count > 140)
+
+
+def format_interaction_question(
+    question: str,
+    *,
+    lang: str = "",
+    context: dict | None = None,
+) -> str:
+    if isinstance(context, dict):
+        for key in ("display_question", "user_facing_question"):
+            value = context.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+
+    if not _should_simplify_interaction(question):
+        return question
+
+    kind = _interaction_question_kind(question)
+    lead = _extract_interaction_lead_line(question)
+    if lang == "en_us":
+        headline = {
+            "powershell": "The agent wants you to review a PowerShell script or command.",
+            "shell": "The agent wants you to review a shell script or command.",
+            "json": "The agent wants you to review a config or JSON snippet.",
+            "technical": "The agent is asking about a longer technical snippet.",
+        }.get(kind, "The agent is asking about a longer technical snippet.")
+        focus_prefix = "Focus"
+        note = "Simplified for display; the full technical text is still preserved in the background."
+    else:
+        headline = {
+            "powershell": "智能体想让你确认一段 PowerShell 脚本或命令。",
+            "shell": "智能体想让你确认一段 Shell 脚本或命令。",
+            "json": "智能体想让你确认一段配置或 JSON 内容。",
+            "technical": "智能体发来了一段较长的技术内容，想请你确认或补充信息。",
+        }.get(kind, "智能体发来了一段较长的技术内容，想请你确认或补充信息。")
+        focus_prefix = "重点"
+        note = "已简化显示，后台仍保留完整技术细节。"
+
+    lines = [headline]
+    if lead:
+        lines.append(f"{focus_prefix}: {_shorten_text(lead)}")
+    lines.append(note)
+    return "\n".join(lines)
 
 
 class TerminalRenderer:
@@ -163,13 +277,44 @@ class TerminalRenderer:
         if len(block.options) > 2:
             self.line(f"d. {self._l(block.options[2].label)}")
 
-    def render_interaction(self, question: str, block: ManifestBlock) -> None:
+    def render_interaction(self, question: str, block: ManifestBlock, *, context: dict | None = None) -> None:
         self.line()
         title = self._l(block.title)
+        display_question = format_interaction_question(question, lang=self.lang, context=context)
         if title:
-            self.line(f"{title}: {question}")
+            if "\n" in display_question:
+                self.line(f"{title}:")
+                for line in display_question.splitlines():
+                    self.line(line)
+            else:
+                self.line(f"{title}: {display_question}")
         else:
-            self.line(question)
+            self.line(display_question)
+
+    def render_approval(self, context: dict | None, question: str) -> None:
+        self.line()
+        sep = self._style("─" * 50, "2")  # dim
+        self.line(sep)
+        if context:
+            command = context.get("command", "")
+            action_type = context.get("action_type", "")
+            risk_level = context.get("risk_level", "")
+            label_cmd = "命令" if self.lang == "zh_cn" else "Command"
+            label_type = "类型" if self.lang == "zh_cn" else "Type"
+            label_risk = "风险" if self.lang == "zh_cn" else "Risk"
+            self.line(f"  {label_cmd}:  {self._style(command, '1')}")  # bold
+            if action_type:
+                self.line(f"  {label_type}:  {action_type}")
+            if risk_level:
+                risk_styled = self._style(risk_level, "1;33") if risk_level == "high" else risk_level
+                self.line(f"  {label_risk}:  {risk_styled}")
+        else:
+            display_question = format_interaction_question(question, lang=self.lang)
+            for line in display_question.splitlines():
+                self.line(f"  {line}")
+        self.line(sep)
+        hint = "[Y]es / [N]o" if self.lang != "zh_cn" else "[Y] 批准 / [N] 拒绝"
+        self.line(f"  {hint}")
 
     def render_notification(self, message: str, *, phase: str | None = None, level: str | None = None) -> None:
         prefixes = _NOTIFICATION_PREFIXES.get(self.lang, {})
@@ -218,6 +363,10 @@ class TerminalRenderer:
                 else f"${remaining_usd:.2f} / ${total_usd:.2f} remaining"
             )
             self.line(f"{amount_label}: {amount_value}")
+        if payload.get("budget_warning"):
+            self.line(f"⚠ {payload['budget_warning']}")
+        if payload.get("budget_binding_incentive"):
+            self.line(f"💡 {payload['budget_binding_incentive']}")
         if payload.get("notif_referral_code"):
             share_heading = block.context_text_localized("share_heading", lang, "")
             if share_heading:
