@@ -753,6 +753,10 @@ $script:UxInteractionTitle = Get-UxText -Path "blocks.interaction_prompt.title.t
 $script:UxInteractionPrompt = Get-UxText -Path "blocks.interaction_prompt.prompt.text" -Fallback "你的回答 / Your answer (直接回车可跳过): "
 $script:UxInteractionSkipNotice = Get-UxText -Path "blocks.interaction_prompt.context.skip_notice.text" -Fallback "已跳过，问题会继续保留在后台。 / Skipped; the question stays pending in the background."
 $script:UxInteractionQueuedNotice = Get-UxText -Path "blocks.interaction_prompt.context.queued_notice.text" -Fallback "已记录你的回答，后台继续处理中。 / Your answer was queued and the background session is continuing."
+$script:UxApprovalPrompt = Get-UxText -Path "blocks.interaction_prompt.context.approval_prompt.text" -Fallback "需要明确审批：请输入 Y 批准，或 N 拒绝： / Approval required. Enter Y to approve or N to deny:"
+$script:UxApprovalRequiredNotice = Get-UxText -Path "blocks.interaction_prompt.context.approval_required_notice.text" -Fallback "这个审批不能跳过，请输入 Y 或 N。 / This approval cannot be skipped. Enter Y or N."
+$script:UxApprovalAutoDeniedNotice = Get-UxText -Path "blocks.interaction_prompt.context.approval_auto_denied_notice.text" -Fallback "多次输入无效，已按拒绝处理。 / Too many invalid inputs. This approval was denied."
+$script:UxApprovalHint = Get-UxText -Path "blocks.interaction_prompt.context.approval_hint.text" -Fallback "[Y] 批准  [N] 拒绝  [Enter] 不会跳过 / [Y] Approve  [N] Deny  [Enter] does not skip"
 $script:UxTaskCompletionSuccessTitle = Get-UxText -Path "blocks.task_completion.context.success_title.text" -Fallback "Task reported complete / 任务已报告完成"
 $script:UxTaskCompletionFailureTitle = Get-UxText -Path "blocks.task_completion.context.failure_title.text" -Fallback "Task failed / 任务失败"
 $script:UxTaskCompletionBudgetLabel = Get-UxText -Path "blocks.task_completion.context.budget_remaining_label.text" -Fallback "Tasks remaining / 剩余额度"
@@ -828,6 +832,10 @@ function Reload-UxStrings {
     $script:UxInteractionPrompt = Get-UxTextLang -Path "blocks.interaction_prompt.prompt" -Fallback "你的回答 / Your answer (直接回车可跳过): "
     $script:UxInteractionSkipNotice = Get-UxTextLang -Path "blocks.interaction_prompt.context.skip_notice" -Fallback "已跳过，问题会继续保留在后台。 / Skipped; the question stays pending in the background."
     $script:UxInteractionQueuedNotice = Get-UxTextLang -Path "blocks.interaction_prompt.context.queued_notice" -Fallback "已记录你的回答，后台继续处理中。 / Your answer was queued and the background session is continuing."
+    $script:UxApprovalPrompt = Get-UxTextLang -Path "blocks.interaction_prompt.context.approval_prompt" -Fallback "需要明确审批：请输入 Y 批准，或 N 拒绝： / Approval required. Enter Y to approve or N to deny:"
+    $script:UxApprovalRequiredNotice = Get-UxTextLang -Path "blocks.interaction_prompt.context.approval_required_notice" -Fallback "这个审批不能跳过，请输入 Y 或 N。 / This approval cannot be skipped. Enter Y or N."
+    $script:UxApprovalAutoDeniedNotice = Get-UxTextLang -Path "blocks.interaction_prompt.context.approval_auto_denied_notice" -Fallback "多次输入无效，已按拒绝处理。 / Too many invalid inputs. This approval was denied."
+    $script:UxApprovalHint = Get-UxTextLang -Path "blocks.interaction_prompt.context.approval_hint" -Fallback "[Y] 批准  [N] 拒绝  [Enter] 不会跳过 / [Y] Approve  [N] Deny  [Enter] does not skip"
     $script:UxTaskCompletionSuccessTitle = Get-UxTextLang -Path "blocks.task_completion.context.success_title" -Fallback "Task reported complete / 任务已报告完成"
     $script:UxTaskCompletionFailureTitle = Get-UxTextLang -Path "blocks.task_completion.context.failure_title" -Fallback "Task failed / 任务失败"
     $script:UxTaskCompletionBudgetLabel = Get-UxTextLang -Path "blocks.task_completion.context.budget_remaining_label" -Fallback "Tasks remaining / 剩余额度"
@@ -3068,6 +3076,61 @@ function Respond-Interaction {
     }
 }
 
+function Normalize-ApprovalAnswer {
+    param([string]$Value)
+
+    $normalized = [string]$Value
+    if (-not $normalized) {
+        return ""
+    }
+    $normalized = $normalized.Trim().ToLowerInvariant()
+    switch ($normalized) {
+        { $_ -in @("y", "yes", "approve", "approved", "ok") } { return "approved" }
+        { $_ -in @("n", "no", "deny", "denied", "reject", "rejected") } { return "denied" }
+        default { return "" }
+    }
+}
+
+function Read-ApprovalDecision {
+    param([bool]$AllowDisconnectHotkey = $false)
+
+    $attempts = 0
+    while ($attempts -lt 5) {
+        try {
+            $answerPrompt = Read-ConsoleLine -Prompt $script:UxApprovalPrompt -AllowDisconnectHotkey $AllowDisconnectHotkey
+        } catch {
+            return [pscustomobject]@{ action = "unavailable"; answer = "" }
+        }
+        if ($answerPrompt.action -eq "exit_ui") {
+            return [pscustomobject]@{ action = "exit_ui"; answer = "" }
+        }
+        if ($answerPrompt.action -eq "disconnect") {
+            return [pscustomobject]@{ action = "disconnect"; answer = "" }
+        }
+
+        $answer = [string]$answerPrompt.value
+        $pasteContinuation = Read-ConsolePasteContinuation
+        if ($pasteContinuation) {
+            if ($answer) {
+                $answer = "$answer`n$pasteContinuation"
+            } else {
+                $answer = $pasteContinuation
+            }
+        }
+
+        $normalized = Normalize-ApprovalAnswer -Value $answer
+        if ($normalized) {
+            return [pscustomobject]@{ action = "answered"; answer = $normalized }
+        }
+
+        $attempts += 1
+        Write-Host "  $script:UxApprovalRequiredNotice"
+    }
+
+    Write-Host "  $script:UxApprovalAutoDeniedNotice"
+    return [pscustomobject]@{ action = "answered"; answer = "denied" }
+}
+
 function Handle-Interaction {
     param(
         [string]$InteractionId,
@@ -3115,28 +3178,46 @@ function Handle-Interaction {
 
     Write-Host ""
     Write-Host ">>> [$script:UxInteractionTitle]: $renderedQuestion"
-    try {
-        $answerPrompt = Read-ConsoleLine -Prompt $script:UxInteractionPrompt -AllowDisconnectHotkey $true
-    } catch {
-        Write-Host "  $(Get-LangText '当前终端不可交互，稍后会再次提问。' 'Non-interactive terminal; will retry this question later.')"
-        return 30
-    }
-    if ($answerPrompt.action -eq "disconnect") {
-        Request-ExplicitDisconnect
-        return 30
-    }
-    $answer = [string]$answerPrompt.value
-    $pasteContinuation = Read-ConsolePasteContinuation
-    if ($pasteContinuation) {
-        if ($answer) {
-            $answer = "$answer`n$pasteContinuation"
-        } else {
-            $answer = $pasteContinuation
+    if ($InteractionType -eq "approval") {
+        Write-Host "  $script:UxApprovalHint" -ForegroundColor Cyan
+        $approval = Read-ApprovalDecision -AllowDisconnectHotkey $true
+        if ($approval.action -eq "exit_ui") {
+            $script:UiExitRequested = $true
+            return 30
         }
-    }
-    if (-not $answer) {
-        Write-Host "  $(Get-LangText '已跳过，稍后会再次提问。' 'Skipped; will wait a bit before asking again.')"
-        return 20
+        if ($approval.action -eq "disconnect") {
+            Request-ExplicitDisconnect
+            return 30
+        }
+        if ($approval.action -eq "unavailable") {
+            Write-Host "  $(Get-LangText '当前终端不可交互，审批会保持待处理，稍后会再次提示。' 'Non-interactive terminal; the approval stays pending and will be shown again later.')"
+            return 30
+        }
+        $answer = [string]$approval.answer
+    } else {
+        try {
+            $answerPrompt = Read-ConsoleLine -Prompt $script:UxInteractionPrompt -AllowDisconnectHotkey $true
+        } catch {
+            Write-Host "  $(Get-LangText '当前终端不可交互，稍后会再次提问。' 'Non-interactive terminal; will retry this question later.')"
+            return 30
+        }
+        if ($answerPrompt.action -eq "disconnect") {
+            Request-ExplicitDisconnect
+            return 30
+        }
+        $answer = [string]$answerPrompt.value
+        $pasteContinuation = Read-ConsolePasteContinuation
+        if ($pasteContinuation) {
+            if ($answer) {
+                $answer = "$answer`n$pasteContinuation"
+            } else {
+                $answer = $pasteContinuation
+            }
+        }
+        if (-not $answer) {
+            Write-Host "  $(Get-LangText '已跳过，稍后会再次提问。' 'Skipped; will wait a bit before asking again.')"
+            return 20
+        }
     }
 
     if (Respond-Interaction -InteractionId $InteractionId -Answer $answer) {
@@ -3812,30 +3893,51 @@ function Attach-HandlePendingInteraction {
 
     Write-Host ""
     Write-Host ">>> [$script:UxInteractionTitle]: $renderedQuestion"
-    $answerPrompt = Read-ConsoleLine -Prompt $script:UxInteractionPrompt -AllowDisconnectHotkey $true
-    if ($answerPrompt.action -eq "exit_ui") {
-        $script:UiExitRequested = $true
-        return $true
-    }
-    if ($answerPrompt.action -eq "disconnect") {
-        Request-ExplicitDisconnect
-        return $true
-    }
-
-    $answer = [string]$answerPrompt.value
-    $pasteContinuation = Read-ConsolePasteContinuation
-    if ($pasteContinuation) {
-        if ($answer) {
-            $answer = "$answer`n$pasteContinuation"
-        } else {
-            $answer = $pasteContinuation
+    $interactionType = if ($payload.interaction_type) { [string]$payload.interaction_type } else { "" }
+    if ($interactionType -eq "approval") {
+        Write-Host "  $script:UxApprovalHint" -ForegroundColor Cyan
+        $approval = Read-ApprovalDecision -AllowDisconnectHotkey $true
+        if ($approval.action -eq "exit_ui") {
+            $script:UiExitRequested = $true
+            return $true
         }
-    }
-    if (-not $answer) {
-        $script:AttachDeferredInteractionId = $interactionId
-        $script:AttachInteractionRetryAfter = $now + 30
-        Write-Host "  $(Get-LangText '已跳过，稍后会再次提问。' 'Skipped; will wait a bit before asking again.')"
-        return $true
+        if ($approval.action -eq "disconnect") {
+            Request-ExplicitDisconnect
+            return $true
+        }
+        if ($approval.action -eq "unavailable") {
+            $script:AttachDeferredInteractionId = $interactionId
+            $script:AttachInteractionRetryAfter = $now + 30
+            Write-Host "  $(Get-LangText '当前终端不可交互，审批会保持待处理，稍后会再次提示。' 'Non-interactive terminal; the approval stays pending and will be shown again later.')"
+            return $true
+        }
+        $answer = [string]$approval.answer
+    } else {
+        $answerPrompt = Read-ConsoleLine -Prompt $script:UxInteractionPrompt -AllowDisconnectHotkey $true
+        if ($answerPrompt.action -eq "exit_ui") {
+            $script:UiExitRequested = $true
+            return $true
+        }
+        if ($answerPrompt.action -eq "disconnect") {
+            Request-ExplicitDisconnect
+            return $true
+        }
+
+        $answer = [string]$answerPrompt.value
+        $pasteContinuation = Read-ConsolePasteContinuation
+        if ($pasteContinuation) {
+            if ($answer) {
+                $answer = "$answer`n$pasteContinuation"
+            } else {
+                $answer = $pasteContinuation
+            }
+        }
+        if (-not $answer) {
+            $script:AttachDeferredInteractionId = $interactionId
+            $script:AttachInteractionRetryAfter = $now + 30
+            Write-Host "  $(Get-LangText '已跳过，稍后会再次提问。' 'Skipped; will wait a bit before asking again.')"
+            return $true
+        }
     }
 
     $script:AttachLastInteractionId = $interactionId

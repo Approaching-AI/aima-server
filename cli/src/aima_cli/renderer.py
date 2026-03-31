@@ -296,24 +296,43 @@ class TerminalRenderer:
         sep = self._style("─" * 50, "2")  # dim
         self.line(sep)
         if context:
-            command = context.get("command", "")
-            action_type = context.get("action_type", "")
-            risk_level = context.get("risk_level", "")
-            label_cmd = "命令" if self.lang == "zh_cn" else "Command"
-            label_type = "类型" if self.lang == "zh_cn" else "Type"
-            label_risk = "风险" if self.lang == "zh_cn" else "Risk"
-            self.line(f"  {label_cmd}:  {self._style(command, '1')}")  # bold
-            if action_type:
-                self.line(f"  {label_type}:  {action_type}")
-            if risk_level:
-                risk_styled = self._style(risk_level, "1;33") if risk_level == "high" else risk_level
+            summary = str(context.get("approval_summary") or context.get("action_label") or "").strip()
+            reason = str(context.get("approval_reason") or "").strip()
+            command = str(context.get("command_preview") or context.get("command") or "").strip()
+            risk_label = str(context.get("risk_label") or context.get("risk_level") or "").strip()
+            label_summary = "审批内容" if self.lang == "zh_cn" else "Approval"
+            label_reason = "确认原因" if self.lang == "zh_cn" else "Why this needs confirmation"
+            label_cmd = "命令预览" if self.lang == "zh_cn" else "Command preview"
+            label_risk = "风险等级" if self.lang == "zh_cn" else "Risk"
+            if summary:
+                self.line(f"  {label_summary}:  {summary}")
+            else:
+                display_question = format_interaction_question(question, lang=self.lang, context=context)
+                for line in display_question.splitlines():
+                    self.line(f"  {line}")
+            if reason:
+                self.line(f"  {label_reason}:  {reason}")
+            if risk_label:
+                risk_styled = self._style(risk_label, "1;33") if "high" in risk_label.lower() or "高" in risk_label else risk_label
                 self.line(f"  {label_risk}:  {risk_styled}")
+            if command:
+                self.line(f"  {label_cmd}:  {self._style(command, '1')}")
         else:
             display_question = format_interaction_question(question, lang=self.lang)
             for line in display_question.splitlines():
                 self.line(f"  {line}")
         self.line(sep)
-        hint = "[Y]es / [N]o" if self.lang != "zh_cn" else "[Y] 批准 / [N] 拒绝"
+        hint = (
+            str(context.get("decision_hint") or "").strip()
+            if isinstance(context, dict)
+            else ""
+        )
+        if not hint:
+            hint = (
+                "Enter Y to approve or N to deny; Enter does not skip."
+                if self.lang != "zh_cn"
+                else "请输入 Y 批准，或 N 拒绝；直接回车不会跳过。"
+            )
         self.line(f"  {hint}")
 
     def render_notification(self, message: str, *, phase: str | None = None, level: str | None = None) -> None:

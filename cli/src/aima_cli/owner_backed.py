@@ -356,25 +356,32 @@ class OwnerBackedAttachedRunner:
             self.session.renderer.render_interaction(question, block, context=interaction_context)
 
         if is_approval:
-            _APPROVE_INPUTS = ("y", "yes", "approve", "ok")
-            _DENY_INPUTS = ("n", "no", "deny", "reject")
+            _APPROVE_INPUTS = ("y", "yes", "approve", "approved", "ok")
+            _DENY_INPUTS = ("n", "no", "deny", "denied", "reject", "rejected")
+            approval_prompt = block.context_text_localized(
+                "approval_prompt",
+                self._lang,
+                "Approval required. Enter Y to approve or N to deny:",
+            )
+            approval_required_notice = block.context_text_localized(
+                "approval_required_notice",
+                self._lang,
+                "This approval cannot be skipped. Enter Y or N.",
+            )
+            approval_auto_denied_notice = block.context_text_localized(
+                "approval_auto_denied_notice",
+                self._lang,
+                "Too many invalid inputs. This approval was denied.",
+            )
             answer = ""
             for _attempt in range(5):
                 try:
-                    raw = (await self.session.input_provider.prompt("[Y/N] > ")).strip()
+                    raw = (await self.session.input_provider.prompt(f"{approval_prompt}\n> ")).strip()
                 except InputClosedError:
                     raise
                 if not raw:
-                    self.attach_deferred_interaction_id = interaction_id
-                    self.attach_deferred_interaction_retry_at = now + self.interaction_retry_after_seconds
-                    self.session.renderer.warn(
-                        block.context_text_localized(
-                            "skip_notice",
-                            self._lang,
-                            "Skipped; the question stays pending.",
-                        )
-                    )
-                    return True
+                    self.session.renderer.warn(approval_required_notice)
+                    continue
                 lowered = raw.lower()
                 if lowered in _APPROVE_INPUTS:
                     answer = "approved"
@@ -383,12 +390,10 @@ class OwnerBackedAttachedRunner:
                     answer = "denied"
                     break
                 else:
-                    hint = "请输入 Y（批准）或 N（拒绝）" if self._lang == "zh_cn" else "Please enter Y (approve) or N (deny)"
-                    self.session.renderer.warn(hint)
+                    self.session.renderer.warn(approval_required_notice)
             else:
                 answer = "denied"
-                denied_hint = "多次无效输入，已自动拒绝" if self._lang == "zh_cn" else "Too many invalid inputs, auto-denied"
-                self.session.renderer.warn(denied_hint)
+                self.session.renderer.warn(approval_auto_denied_notice)
         else:
             try:
                 prompt_text = f"{block.prompt.localized(self._lang)}\n> "

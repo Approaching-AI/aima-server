@@ -588,18 +588,50 @@ class AttachedDeviceSession:
             return True
 
         block = self.manifest.block("interaction_prompt")
-        self.renderer.render_interaction(question, block, context=payload.get("interaction_context"))
+        interaction_context = payload.get("interaction_context")
         lang = self._lang
-        answer = (await self.input_provider.prompt(f"{block.prompt.localized(lang)}\n> ")).strip()
-        if not answer:
-            self.renderer.warn(
-                block.context_text_localized(
-                    "skip_notice",
-                    lang,
-                    "Skipped; the question stays pending.",
-                )
+        if interaction_type == "approval":
+            self.renderer.render_approval(interaction_context, question)
+            approval_prompt = block.context_text_localized(
+                "approval_prompt",
+                lang,
+                "Approval required. Enter Y to approve or N to deny:",
             )
-            return True
+            approval_required_notice = block.context_text_localized(
+                "approval_required_notice",
+                lang,
+                "This approval cannot be skipped. Enter Y or N.",
+            )
+            approval_auto_denied_notice = block.context_text_localized(
+                "approval_auto_denied_notice",
+                lang,
+                "Too many invalid inputs. This approval was denied.",
+            )
+            answer = ""
+            for _attempt in range(5):
+                raw = (await self.input_provider.prompt(f"{approval_prompt}\n> ")).strip().lower()
+                if raw in {"y", "yes", "approve", "approved", "ok"}:
+                    answer = "approved"
+                    break
+                if raw in {"n", "no", "deny", "denied", "reject", "rejected"}:
+                    answer = "denied"
+                    break
+                self.renderer.warn(approval_required_notice)
+            else:
+                answer = "denied"
+                self.renderer.warn(approval_auto_denied_notice)
+        else:
+            self.renderer.render_interaction(question, block, context=interaction_context)
+            answer = (await self.input_provider.prompt(f"{block.prompt.localized(lang)}\n> ")).strip()
+            if not answer:
+                self.renderer.warn(
+                    block.context_text_localized(
+                        "skip_notice",
+                        lang,
+                        "Skipped; the question stays pending.",
+                    )
+                )
+                return True
         await self._with_reauth(
             self.api.respond_interaction,
             device_id=self.state.device_id,

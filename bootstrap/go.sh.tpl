@@ -636,6 +636,10 @@ UX_INTERACTION_TITLE="$(ux_manifest_text "blocks.interaction_prompt.title.text" 
 UX_INTERACTION_PROMPT="$(ux_manifest_text "blocks.interaction_prompt.prompt.text" "你的回答 / Your answer (直接回车可跳过):")"
 UX_INTERACTION_SKIP_NOTICE="$(ux_manifest_text "blocks.interaction_prompt.context.skip_notice.text" "已跳过，问题会继续保留在后台。 / Skipped; the question stays pending in the background.")"
 UX_INTERACTION_QUEUED_NOTICE="$(ux_manifest_text "blocks.interaction_prompt.context.queued_notice.text" "已记录你的回答，后台继续处理中。 / Your answer was queued and the background session is continuing.")"
+UX_APPROVAL_PROMPT="$(ux_manifest_text "blocks.interaction_prompt.context.approval_prompt.text" "需要明确审批：请输入 Y 批准，或 N 拒绝： / Approval required. Enter Y to approve or N to deny:")"
+UX_APPROVAL_REQUIRED_NOTICE="$(ux_manifest_text "blocks.interaction_prompt.context.approval_required_notice.text" "这个审批不能跳过，请输入 Y 或 N。 / This approval cannot be skipped. Enter Y or N.")"
+UX_APPROVAL_AUTO_DENIED_NOTICE="$(ux_manifest_text "blocks.interaction_prompt.context.approval_auto_denied_notice.text" "多次输入无效，已按拒绝处理。 / Too many invalid inputs. This approval was denied.")"
+UX_APPROVAL_HINT="$(ux_manifest_text "blocks.interaction_prompt.context.approval_hint.text" "[Y] 批准  [N] 拒绝  [Enter] 不会跳过 / [Y] Approve  [N] Deny  [Enter] does not skip")"
 UX_TASK_COMPLETION_SUCCESS_TITLE="$(ux_manifest_text "blocks.task_completion.context.success_title.text" "Task reported complete / 任务已报告完成")"
 UX_TASK_COMPLETION_FAILURE_TITLE="$(ux_manifest_text "blocks.task_completion.context.failure_title.text" "Task failed / 任务失败")"
 UX_TASK_COMPLETION_BUDGET_LABEL="$(ux_manifest_text "blocks.task_completion.context.budget_remaining_label.text" "Tasks remaining / 剩余额度")"
@@ -727,6 +731,10 @@ reload_ux_strings() {
     UX_INTERACTION_PROMPT="$(ux_manifest_text_lang "blocks.interaction_prompt.prompt" "你的回答 / Your answer (直接回车可跳过):")"
     UX_INTERACTION_SKIP_NOTICE="$(ux_manifest_text_lang "blocks.interaction_prompt.context.skip_notice" "已跳过，问题会继续保留在后台。 / Skipped; the question stays pending in the background.")"
     UX_INTERACTION_QUEUED_NOTICE="$(ux_manifest_text_lang "blocks.interaction_prompt.context.queued_notice" "已记录你的回答，后台继续处理中。 / Your answer was queued and the background session is continuing.")"
+    UX_APPROVAL_PROMPT="$(ux_manifest_text_lang "blocks.interaction_prompt.context.approval_prompt" "需要明确审批：请输入 Y 批准，或 N 拒绝： / Approval required. Enter Y to approve or N to deny:")"
+    UX_APPROVAL_REQUIRED_NOTICE="$(ux_manifest_text_lang "blocks.interaction_prompt.context.approval_required_notice" "这个审批不能跳过，请输入 Y 或 N。 / This approval cannot be skipped. Enter Y or N.")"
+    UX_APPROVAL_AUTO_DENIED_NOTICE="$(ux_manifest_text_lang "blocks.interaction_prompt.context.approval_auto_denied_notice" "多次输入无效，已按拒绝处理。 / Too many invalid inputs. This approval was denied.")"
+    UX_APPROVAL_HINT="$(ux_manifest_text_lang "blocks.interaction_prompt.context.approval_hint" "[Y] 批准  [N] 拒绝  [Enter] 不会跳过 / [Y] Approve  [N] Deny  [Enter] does not skip")"
     UX_TASK_COMPLETION_SUCCESS_TITLE="$(ux_manifest_text_lang "blocks.task_completion.context.success_title" "Task reported complete / 任务已报告完成")"
     UX_TASK_COMPLETION_FAILURE_TITLE="$(ux_manifest_text_lang "blocks.task_completion.context.failure_title" "Task failed / 任务失败")"
     UX_TASK_COMPLETION_BUDGET_LABEL="$(ux_manifest_text_lang "blocks.task_completion.context.budget_remaining_label" "Tasks remaining / 剩余额度")"
@@ -3304,29 +3312,70 @@ attach_handle_pending_interaction() {
 
     printf '\n\033[2m─── %s ──────────────────────────────────\033[0m\n' "$UX_INTERACTION_TITLE"
     printf '  \033[33m%s\033[0m\n' "$rendered_question"
-    printf '  \033[36m%s\033[0m\n  \033[36m>\033[0m ' "$UX_INTERACTION_PROMPT"
-    local answer=""
-    read_tty_with_hotkeys 1 || true
-    case "$READ_TTY_ACTION" in
-        disconnect)
-            request_explicit_disconnect
-            return 0
-            ;;
-        eof|unavailable)
+    local answer="" attempts=0 normalized=""
+    if [ "$interaction_type" = "approval" ]; then
+        printf '  \033[36m%s\033[0m\n' "$UX_APPROVAL_HINT"
+        while [ "$attempts" -lt 5 ]; do
+            printf '  \033[36m%s\033[0m\n  \033[36m>\033[0m ' "$UX_APPROVAL_PROMPT"
+            read_tty_with_hotkeys 1 || true
+            case "$READ_TTY_ACTION" in
+                disconnect)
+                    request_explicit_disconnect
+                    return 0
+                    ;;
+                eof|unavailable)
+                    ATTACH_DEFERRED_INTERACTION_ID="$interaction_id"
+                    ATTACH_INTERACTION_RETRY_AFTER_TS=$((now + 30))
+                    warn "$(lang_text "当前终端不可交互，审批会保持待处理，稍后会再次提示。" "Non-interactive terminal; the approval stays pending and will be shown again later.")"
+                    print_execution_separator
+                    return 0
+                    ;;
+            esac
+            answer="$(merge_tty_paste_continuation "$READ_TTY_VALUE")"
+            normalized="$(printf '%s' "$answer" | tr '[:upper:]' '[:lower:]')"
+            case "$normalized" in
+                y|yes|approve|approved|ok)
+                    answer="approved"
+                    break
+                    ;;
+                n|no|deny|denied|reject|rejected)
+                    answer="denied"
+                    break
+                    ;;
+                *)
+                    attempts=$((attempts + 1))
+                    warn "$UX_APPROVAL_REQUIRED_NOTICE"
+                    ;;
+            esac
+        done
+        if [ -z "$answer" ] || { [ "$answer" != "approved" ] && [ "$answer" != "denied" ]; }; then
+            answer="denied"
+            warn "$UX_APPROVAL_AUTO_DENIED_NOTICE"
+        fi
+    else
+        printf '  \033[36m%s\033[0m\n  \033[36m>\033[0m ' "$UX_INTERACTION_PROMPT"
+        read_tty_with_hotkeys 1 || true
+        case "$READ_TTY_ACTION" in
+            disconnect)
+                request_explicit_disconnect
+                return 0
+                ;;
+            eof|unavailable)
+                ATTACH_DEFERRED_INTERACTION_ID="$interaction_id"
+                ATTACH_INTERACTION_RETRY_AFTER_TS=$((now + 30))
+                warn "$(lang_text "已跳过，稍后会再次提问。" "Skipped; will wait a bit before asking again.")"
+                print_execution_separator
+                return 0
+                ;;
+        esac
+        answer="$(merge_tty_paste_continuation "$READ_TTY_VALUE")"
+        if [ -z "$answer" ]; then
             ATTACH_DEFERRED_INTERACTION_ID="$interaction_id"
             ATTACH_INTERACTION_RETRY_AFTER_TS=$((now + 30))
             warn "$(lang_text "已跳过，稍后会再次提问。" "Skipped; will wait a bit before asking again.")"
             print_execution_separator
             return 0
-            ;;
-    esac
-    answer="$(merge_tty_paste_continuation "$READ_TTY_VALUE")"
-    if [ -z "$answer" ]; then
-        ATTACH_DEFERRED_INTERACTION_ID="$interaction_id"
-        ATTACH_INTERACTION_RETRY_AFTER_TS=$((now + 30))
-        warn "$(lang_text "已跳过，稍后会再次提问。" "Skipped; will wait a bit before asking again.")"
-        print_execution_separator
-        return 0
+        fi
     fi
     ATTACH_LAST_INTERACTION_ID="$interaction_id"
     ATTACH_DEFERRED_INTERACTION_ID=""
@@ -3540,30 +3589,73 @@ handle_interaction() {
     printf '  \033[33m%s\033[0m\n' "$rendered_question"
 
     if ! tty_available; then
-        warn "$(lang_text "当前终端不可交互，稍后会再次提问。" "Non-interactive terminal; will retry this question later.")"
+        if [ "$interaction_type" = "approval" ]; then
+            warn "$(lang_text "当前终端不可交互，审批会保持待处理，稍后会再次提示。" "Non-interactive terminal; the approval stays pending and will be shown again later.")"
+        else
+            warn "$(lang_text "当前终端不可交互，稍后会再次提问。" "Non-interactive terminal; will retry this question later.")"
+        fi
         print_execution_separator
         return 30
     fi
 
-    printf '  \033[36m>\033[0m '
-    local answer=""
-    read_tty_with_hotkeys 1 || true
-    case "$READ_TTY_ACTION" in
-        disconnect)
-            request_explicit_disconnect
-            return 30
-            ;;
-        eof|unavailable)
-            warn "$(lang_text "当前终端不可交互，稍后会再次提问。" "Non-interactive terminal; will retry this question later.")"
+    local answer="" attempts=0 normalized=""
+    if [ "$interaction_type" = "approval" ]; then
+        printf '  \033[36m%s\033[0m\n' "$UX_APPROVAL_HINT"
+        while [ "$attempts" -lt 5 ]; do
+            printf '  \033[36m%s\033[0m\n  \033[36m>\033[0m ' "$UX_APPROVAL_PROMPT"
+            read_tty_with_hotkeys 1 || true
+            case "$READ_TTY_ACTION" in
+                disconnect)
+                    request_explicit_disconnect
+                    return 30
+                    ;;
+                eof|unavailable)
+                    warn "$(lang_text "当前终端不可交互，审批会保持待处理，稍后会再次提示。" "Non-interactive terminal; the approval stays pending and will be shown again later.")"
+                    print_execution_separator
+                    return 30
+                    ;;
+            esac
+            answer="$(merge_tty_paste_continuation "$READ_TTY_VALUE")"
+            normalized="$(printf '%s' "$answer" | tr '[:upper:]' '[:lower:]')"
+            case "$normalized" in
+                y|yes|approve|approved|ok)
+                    answer="approved"
+                    break
+                    ;;
+                n|no|deny|denied|reject|rejected)
+                    answer="denied"
+                    break
+                    ;;
+                *)
+                    attempts=$((attempts + 1))
+                    warn "$UX_APPROVAL_REQUIRED_NOTICE"
+                    ;;
+            esac
+        done
+        if [ -z "$answer" ] || { [ "$answer" != "approved" ] && [ "$answer" != "denied" ]; }; then
+            answer="denied"
+            warn "$UX_APPROVAL_AUTO_DENIED_NOTICE"
+        fi
+    else
+        printf '  \033[36m>\033[0m '
+        read_tty_with_hotkeys 1 || true
+        case "$READ_TTY_ACTION" in
+            disconnect)
+                request_explicit_disconnect
+                return 30
+                ;;
+            eof|unavailable)
+                warn "$(lang_text "当前终端不可交互，稍后会再次提问。" "Non-interactive terminal; will retry this question later.")"
+                print_execution_separator
+                return 30
+                ;;
+        esac
+        answer="$(merge_tty_paste_continuation "$READ_TTY_VALUE")"
+        if [ -z "$answer" ]; then
+            warn "$(lang_text "已跳过，稍后会再次提问。" "Skipped; will wait a bit before asking again.")"
             print_execution_separator
-            return 30
-            ;;
-    esac
-    answer="$(merge_tty_paste_continuation "$READ_TTY_VALUE")"
-    if [ -z "$answer" ]; then
-        warn "$(lang_text "已跳过，稍后会再次提问。" "Skipped; will wait a bit before asking again.")"
-        print_execution_separator
-        return 20
+            return 20
+        fi
     fi
 
     if respond_interaction "$interaction_id" "$answer"; then
