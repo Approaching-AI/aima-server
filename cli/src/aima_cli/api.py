@@ -257,3 +257,17 @@ class DeviceApiClient:
             headers=self.device_headers(device_token),
             json_body={"display_language": display_language},
         )
+
+    async def update_nickname(
+        self,
+        *,
+        device_id: str,
+        device_token: str,
+        nickname: str | None,
+    ) -> dict[str, Any]:
+        return await self._request(
+            "PATCH",
+            f"/api/v1/devices/{device_id}/nickname",
+            headers=self.device_headers(device_token),
+            json_body={"nickname": nickname},
+        )
