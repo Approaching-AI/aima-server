@@ -33,6 +33,19 @@ try {
     # Standalone mode: placeholders not filled by server. Preamble will bootstrap.
 }
 
+function Select-PreferredPlatformUrl {
+    param(
+        [string]$CurrentUrl,
+        [string]$SavedUrl
+    )
+
+    if ($CurrentUrl -and $SavedUrl -and $CurrentUrl -match '^https://' -and $SavedUrl -notmatch '^https://') {
+        return $CurrentUrl
+    }
+
+    return $SavedUrl
+}
+
 # ── Standalone mode bootstrap ────────────────────────────────────
 # When installed via pip/npm/brew, template placeholders remain unfilled.
 # Detect this and bootstrap configuration at runtime.
@@ -62,11 +75,10 @@ if ($_standaloneMode) {
         }
     }
 
-    if ($_savedUrl) {
-        $BaseUrl = $_savedUrl
-    } elseif ($env:AIMA_BASE_URL) {
+    $_fallbackUrl = $null
+    if ($env:AIMA_BASE_URL) {
         # Priority 2: explicit env var override
-        $BaseUrl = "$($env:AIMA_BASE_URL.TrimEnd('/'))/api/v1"
+        $_fallbackUrl = "$($env:AIMA_BASE_URL.TrimEnd('/'))/api/v1"
     } else {
         # Priority 3: auto-detect region from culture/timezone
         $_region = "global"
@@ -81,10 +93,15 @@ if ($_standaloneMode) {
             } catch {}
         }
         if ($_region -eq "cn") {
-            $BaseUrl = "https://aimaserver.com/api/v1"
+            $_fallbackUrl = "https://aimaserver.com/api/v1"
         } else {
-            $BaseUrl = "https://aimaservice.ai/api/v1"
+            $_fallbackUrl = "https://aimaservice.ai/api/v1"
         }
+    }
+    if ($_savedUrl) {
+        $BaseUrl = Select-PreferredPlatformUrl -CurrentUrl $_fallbackUrl -SavedUrl $_savedUrl
+    } else {
+        $BaseUrl = $_fallbackUrl
     }
 
     # Fetch UX manifest at runtime (variables are already $null from defaults
@@ -2001,7 +2018,8 @@ function Load-RecoveryCodeFromSavedState {
                 $script:RecoveryCode = [string]$cliState.recovery_code
             }
             if ($cliState.platform_url) {
-                Set-Variable -Name BaseUrl -Scope Script -Value ([string]$cliState.platform_url)
+                $preferredUrl = Select-PreferredPlatformUrl -CurrentUrl $BaseUrl -SavedUrl ([string]$cliState.platform_url)
+                Set-Variable -Name BaseUrl -Scope Script -Value $preferredUrl
             }
         } catch { }
     }
@@ -2024,7 +2042,8 @@ function Load-RecoveryCodeFromSavedState {
                     $script:RecoveryCode = $Matches[1]
                 }
                 if ($_ -match '^PLATFORM_URL=(.*)$') {
-                    Set-Variable -Name BaseUrl -Scope Script -Value $Matches[1]
+                    $preferredUrl = Select-PreferredPlatformUrl -CurrentUrl $BaseUrl -SavedUrl $Matches[1]
+                    Set-Variable -Name BaseUrl -Scope Script -Value $preferredUrl
                 }
             }
         } catch { }
@@ -2041,7 +2060,8 @@ function Load-RecoveryCodeFromSavedState {
                         $script:RecoveryCode = $Matches[1]
                     }
                     if ($_ -match '^PLATFORM_URL=(.*)$') {
-                        Set-Variable -Name BaseUrl -Scope Script -Value $Matches[1]
+                        $preferredUrl = Select-PreferredPlatformUrl -CurrentUrl $BaseUrl -SavedUrl $Matches[1]
+                        Set-Variable -Name BaseUrl -Scope Script -Value $preferredUrl
                     }
                 }
             }

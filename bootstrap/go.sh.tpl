@@ -128,6 +128,18 @@ DEVICE_BUDGET_USD=""
 DEVICE_SPENT_USD=""
 UX_MANIFEST_JSON=__UX_MANIFEST_JSON__
 
+select_preferred_platform_url() {
+    local current_url="${1:-}"
+    local saved_url="${2:-}"
+
+    if [ -n "$current_url" ] && [ -n "$saved_url" ] && [ "${current_url#https://}" != "$current_url" ] && [ "${saved_url#https://}" = "$saved_url" ]; then
+        printf '%s\n' "$current_url"
+        return 0
+    fi
+
+    printf '%s\n' "$saved_url"
+}
+
 # ── Standalone mode bootstrap ────────────────────────────────────
 # When installed via pip/npm/brew, template placeholders remain literal.
 # Detect this and bootstrap configuration at runtime.
@@ -161,11 +173,10 @@ except Exception:
 ' "${HOME}/.aima-cli/device-state.json" 2>/dev/null || true)"
     fi
 
-    if [ -n "$_saved_url" ]; then
-        BASE_URL="$_saved_url"
-    elif [ -n "${AIMA_BASE_URL:-}" ]; then
+    _fallback_url=""
+    if [ -n "${AIMA_BASE_URL:-}" ]; then
         # Priority 2: explicit env var override
-        BASE_URL="${AIMA_BASE_URL%/}/api/v1"
+        _fallback_url="${AIMA_BASE_URL%/}/api/v1"
     else
         # Priority 3: auto-detect region from locale/timezone
         _region="global"
@@ -179,10 +190,15 @@ except Exception:
             esac
         fi
         if [ "$_region" = "cn" ]; then
-            BASE_URL="https://aimaserver.com/api/v1"
+            _fallback_url="https://aimaserver.com/api/v1"
         else
-            BASE_URL="https://aimaservice.ai/api/v1"
+            _fallback_url="https://aimaservice.ai/api/v1"
         fi
+    fi
+    if [ -n "$_saved_url" ]; then
+        BASE_URL="$(select_preferred_platform_url "$_fallback_url" "$_saved_url")"
+    else
+        BASE_URL="$_fallback_url"
     fi
 
     # Clear unfilled template placeholders to sensible defaults
@@ -1868,6 +1884,7 @@ sync_saved_state_from_disk() {
     MY_REFERRAL_CODE="$state_referral_code"
     LAST_NOTIFIED_TASK_ID="$state_last_notified"
     DISPLAY_LANGUAGE="$state_display_language"
+    state_platform_url="$(select_preferred_platform_url "$BASE_URL" "$state_platform_url")"
     [ -n "$state_platform_url" ] && BASE_URL="$state_platform_url"
     return 0
 }
@@ -1949,6 +1966,7 @@ EOF
 
     EXISTING_RECOVERY_CODE="$saved_rc"
     RECOVERY_CODE="$saved_rc"
+    saved_url="$(select_preferred_platform_url "$BASE_URL" "$saved_url")"
     [ -n "$saved_url" ] && BASE_URL="$saved_url"
     return 0
 }
