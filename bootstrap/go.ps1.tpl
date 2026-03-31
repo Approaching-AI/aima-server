@@ -2297,6 +2297,30 @@ function Read-ConsoleLine {
     } else {
         Write-Host $Prompt -NoNewline
     }
+    $inputStartLeft = [Console]::CursorLeft
+    $inputStartTop = [Console]::CursorTop
+    $cursorIndex = 0
+    $renderedLength = 0
+    $renderInput = {
+        param(
+            [System.Text.StringBuilder]$Buffer,
+            [int]$Cursor,
+            [int]$Rendered
+        )
+
+        $text = $Buffer.ToString()
+        $clearPadding = ""
+        if ($Rendered -gt $text.Length) {
+            $clearPadding = " " * ($Rendered - $text.Length)
+        }
+        try {
+            [Console]::SetCursorPosition($inputStartLeft, $inputStartTop)
+            Write-Host ($text + $clearPadding) -NoNewline
+            [Console]::SetCursorPosition($inputStartLeft + $Cursor, $inputStartTop)
+        } catch {
+            Write-Host ("`r" + $Prompt + $text + $clearPadding) -NoNewline
+        }
+    }
     while ($true) {
         if ($IdlePollMilliseconds -gt 0 -and $OnIdleAction) {
             while (-not [Console]::KeyAvailable) {
@@ -2345,6 +2369,16 @@ function Read-ConsoleLine {
                 value = $null
             }
         }
+        if (($key.Modifiers -band [ConsoleModifiers]::Control) -and $key.Key -eq [ConsoleKey]::A) {
+            $cursorIndex = 0
+            & $renderInput $builder $cursorIndex $renderedLength
+            continue
+        }
+        if (($key.Modifiers -band [ConsoleModifiers]::Control) -and $key.Key -eq [ConsoleKey]::E) {
+            $cursorIndex = $builder.Length
+            & $renderInput $builder $cursorIndex $renderedLength
+            continue
+        }
 
         switch ($key.Key) {
             ([ConsoleKey]::Enter) {
@@ -2355,15 +2389,46 @@ function Read-ConsoleLine {
                 }
             }
             ([ConsoleKey]::Backspace) {
-                if ($builder.Length -gt 0) {
-                    $builder.Length -= 1
-                    Write-Host "`b `b" -NoNewline
+                if ($cursorIndex -gt 0) {
+                    [void]$builder.Remove($cursorIndex - 1, 1)
+                    $cursorIndex -= 1
+                    & $renderInput $builder $cursorIndex $renderedLength
+                    $renderedLength = $builder.Length
                 }
+            }
+            ([ConsoleKey]::Delete) {
+                if ($cursorIndex -lt $builder.Length) {
+                    [void]$builder.Remove($cursorIndex, 1)
+                    & $renderInput $builder $cursorIndex $renderedLength
+                    $renderedLength = $builder.Length
+                }
+            }
+            ([ConsoleKey]::LeftArrow) {
+                if ($cursorIndex -gt 0) {
+                    $cursorIndex -= 1
+                    & $renderInput $builder $cursorIndex $renderedLength
+                }
+            }
+            ([ConsoleKey]::RightArrow) {
+                if ($cursorIndex -lt $builder.Length) {
+                    $cursorIndex += 1
+                    & $renderInput $builder $cursorIndex $renderedLength
+                }
+            }
+            ([ConsoleKey]::Home) {
+                $cursorIndex = 0
+                & $renderInput $builder $cursorIndex $renderedLength
+            }
+            ([ConsoleKey]::End) {
+                $cursorIndex = $builder.Length
+                & $renderInput $builder $cursorIndex $renderedLength
             }
             default {
                 if (-not [char]::IsControl($key.KeyChar)) {
-                    [void]$builder.Append($key.KeyChar)
-                    Write-Host $key.KeyChar -NoNewline
+                    [void]$builder.Insert($cursorIndex, [string]$key.KeyChar)
+                    $cursorIndex += 1
+                    & $renderInput $builder $cursorIndex $renderedLength
+                    $renderedLength = $builder.Length
                 }
             }
         }
