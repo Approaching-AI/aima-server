@@ -170,6 +170,7 @@ $script:AttachLastInteractionId = $null
 $script:AttachDeferredInteractionId = $null
 $script:AttachInteractionRetryAfter = [int64]0
 $script:AttachLastCompletionId = $null
+$script:AttachIdlePollMilliseconds = 250
 $script:DeviceMaxTasks = $null
 $script:DeviceUsedTasks = $null
 $script:DeviceBudgetUsd = $null
@@ -2278,7 +2279,9 @@ function Read-ConsoleLine {
         [string]$PromptColor = "",
         [bool]$AllowCancelHotkey = $false,
         [bool]$AllowDisconnectHotkey = $false,
-        [bool]$AllowBindHotkey = $false
+        [bool]$AllowBindHotkey = $false,
+        [int]$IdlePollMilliseconds = 0,
+        [scriptblock]$OnIdleAction = $null
     )
 
     if ([System.Console]::IsInputRedirected) {
@@ -2295,6 +2298,24 @@ function Read-ConsoleLine {
         Write-Host $Prompt -NoNewline
     }
     while ($true) {
+        if ($IdlePollMilliseconds -gt 0 -and $OnIdleAction) {
+            while (-not [Console]::KeyAvailable) {
+                $idleAction = $null
+                try {
+                    $idleAction = & $OnIdleAction
+                } catch {
+                    $idleAction = $null
+                }
+                if ($idleAction) {
+                    Write-Host ""
+                    return [pscustomobject]@{
+                        action = "refresh"
+                        value = [string]$idleAction
+                    }
+                }
+                Start-Sleep -Milliseconds $IdlePollMilliseconds
+            }
+        }
         $key = [Console]::ReadKey($true)
         if (($key.Modifiers -band [ConsoleModifiers]::Control) -and $AllowCancelHotkey -and $key.Key -eq [ConsoleKey]::K) {
             Write-Host ""
@@ -3678,7 +3699,13 @@ function Show-TaskMenu {
 
         if ([System.Console]::IsInputRedirected) { return }
 
-        $menuInput = Read-ConsoleLine -Prompt "  > " -PromptColor "Cyan" -AllowDisconnectHotkey $true -AllowBindHotkey $true
+        $menuInput = Read-ConsoleLine `
+            -Prompt "  > " `
+            -PromptColor "Cyan" `
+            -AllowDisconnectHotkey $true `
+            -AllowBindHotkey $true `
+            -IdlePollMilliseconds $script:AttachIdlePollMilliseconds `
+            -OnIdleAction ${function:Get-AttachedIdleInterruptReason}
         switch ($menuInput.action) {
             "exit_ui" {
                 $script:UiExitRequested = $true
@@ -3698,6 +3725,9 @@ function Show-TaskMenu {
                     $script:LocalCancelRequested = $false
                 }
                 continue
+            }
+            "refresh" {
+                return "refresh"
             }
             "unavailable" {
                 return
@@ -3860,6 +3890,33 @@ function Attach-ShowStatusIfChanged {
     return $true
 }
 
+function Get-PendingInteractionActiveTaskId {
+    $payload = Get-JsonFileObject -Path $script:PendingInteractionFile
+    if ($payload -and $payload.active_task_id) {
+        return [string]$payload.active_task_id
+    }
+    return $null
+}
+
+function Get-AttachedIdleInterruptReason {
+    $completionPayload = Get-JsonFileObject -Path $script:TaskCompletionFile
+    if ($completionPayload -and $completionPayload.task_id) {
+        return "task_completion"
+    }
+
+    $pendingPayload = Get-JsonFileObject -Path $script:PendingInteractionFile
+    if ($pendingPayload -and $pendingPayload.interaction_id) {
+        return "pending_interaction"
+    }
+
+    $ownerActiveTaskId = Get-OwnerActiveTaskId
+    if ($ownerActiveTaskId) {
+        return "active_task"
+    }
+
+    return $null
+}
+
 function Attach-HandlePendingInteraction {
     param([string]$CurrentActiveTaskId = $null)
 
@@ -3867,12 +3924,7 @@ function Attach-HandlePendingInteraction {
     if (-not $payload -or -not $payload.interaction_id) {
         return $false
     }
-    if (
-        $payload.active_task_id -and (
-            (-not $CurrentActiveTaskId) -or
-            ([string]$payload.active_task_id -ne [string]$CurrentActiveTaskId)
-        )
-    ) {
+    if ($payload.active_task_id -and $CurrentActiveTaskId -and [string]$payload.active_task_id -ne [string]$CurrentActiveTaskId) {
         Clear-PendingInteractionFile
         return $false
     }
@@ -4031,6 +4083,11 @@ function Show-AttachedUiLoop {
             $script:LocalCancelRequested = $false
         }
 
+        [void](Attach-HandleTaskCompletion)
+        if ($script:UiExitRequested) {
+            return
+        }
+
         $activeResp = Get-ActiveTaskInfo
         $currentAttachTaskId = $null
         if ($activeResp -and $activeResp.has_active_task -eq $true -and $activeResp.task_id) {
@@ -4038,17 +4095,22 @@ function Show-AttachedUiLoop {
         } else {
             $currentAttachTaskId = Get-OwnerActiveTaskId
         }
+        if (-not $currentAttachTaskId) {
+            $currentAttachTaskId = Get-PendingInteractionActiveTaskId
+        }
 
         if ($currentAttachTaskId) {
             $script:ActiveTaskId = [string]$currentAttachTaskId
             $script:ActiveTaskLookupMisses = 0
-            [void](Attach-HandlePendingInteraction -CurrentActiveTaskId $currentAttachTaskId)
+        }
+
+        [void](Attach-HandlePendingInteraction -CurrentActiveTaskId $currentAttachTaskId)
+        if ($script:UiExitRequested) {
+            return
+        }
+
+        if ($currentAttachTaskId) {
             [void](Attach-ShowStatusIfChanged -CurrentActiveTaskId $currentAttachTaskId)
-            if ($script:UiExitRequested) {
-                return
-            }
-        } else {
-            [void](Attach-HandleTaskCompletion)
             if ($script:UiExitRequested) {
                 return
             }
@@ -4106,11 +4168,12 @@ function Show-AttachedUiLoop {
         $script:ConfirmedActiveTaskId = $null
         $script:ActiveTaskId = $null
         $script:ActiveTaskLookupMisses = 0
-        Clear-TaskRuntimeState
-        Reset-AttachRuntimeCache
-        Show-TaskMenu
+        $taskMenuResult = Show-TaskMenu
         if ($script:ExplicitDisconnectRequested -or $script:UiExitRequested) {
             return
+        }
+        if ($taskMenuResult -eq "refresh") {
+            continue
         }
         Start-Sleep -Seconds 1
     }

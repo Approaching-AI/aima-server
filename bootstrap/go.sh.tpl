@@ -111,6 +111,7 @@ LAST_NOTIFIED_TASK_ID=""
 IS_BOUND=0
 HOTKEY_READ_TIMEOUT_SECONDS="0.05"
 READ_TTY_PASTE_CONTINUATION_TIMEOUT="0.02"
+ATTACH_IDLE_POLL_SECONDS="0.25"
 READ_TTY_USE_READLINE=0
 SHOW_RAW_COMMANDS="${AIMA_SHOW_RAW_COMMANDS:-0}"
 RUN_AS_OWNER=0
@@ -122,6 +123,7 @@ ATTACH_LAST_INTERACTION_ID=""
 ATTACH_DEFERRED_INTERACTION_ID=""
 ATTACH_INTERACTION_RETRY_AFTER_TS=0
 ATTACH_LAST_COMPLETION_ID=""
+ASK_AND_CREATE_TASK_RESULT=""
 DEVICE_MAX_TASKS=""
 DEVICE_USED_TASKS=""
 DEVICE_BUDGET_USD=""
@@ -242,6 +244,7 @@ if [ -n "${BASH_VERSINFO:-}" ] && [ "${BASH_VERSINFO[0]:-0}" -le 3 ]; then
     # continuation lines on macOS terminals, so use a short whole-second
     # idle window for multiline paste capture.
     READ_TTY_PASTE_CONTINUATION_TIMEOUT="1"
+    ATTACH_IDLE_POLL_SECONDS="1"
 fi
 
 case "$(help read 2>/dev/null || true)" in
@@ -1555,7 +1558,9 @@ READ_TTY_VALUE=""
 read_tty_with_hotkeys() {
     local allow_disconnect="${1:-0}"
     local allow_bind="${2:-0}"
+    local idle_hook="${3:-}"
     local key="" escape_tail="" buffer=""
+    local read_status=0
 
     READ_TTY_ACTION="unavailable"
     READ_TTY_VALUE=""
@@ -1565,7 +1570,26 @@ read_tty_with_hotkeys() {
 
     stty sane < /dev/tty 2>/dev/null || true
     while true; do
-        if ! IFS= read -rsn 1 key < /dev/tty; then
+        if [ -n "$idle_hook" ]; then
+            IFS= read -rsn 1 -t "$ATTACH_IDLE_POLL_SECONDS" key < /dev/tty
+            read_status=$?
+            if [ "$read_status" -ne 0 ]; then
+                local idle_result=""
+                if ! tty_available; then
+                    READ_TTY_ACTION="eof"
+                    READ_TTY_VALUE="$buffer"
+                    return 1
+                fi
+                idle_result="$($idle_hook 2>/dev/null || true)"
+                if [ -n "$idle_result" ]; then
+                    printf '\n'
+                    READ_TTY_ACTION="refresh"
+                    READ_TTY_VALUE="$idle_result"
+                    return 0
+                fi
+                continue
+            fi
+        elif ! IFS= read -rsn 1 key < /dev/tty; then
             READ_TTY_ACTION="eof"
             READ_TTY_VALUE="$buffer"
             return 1
@@ -3068,6 +3092,7 @@ prompt_attached_active_task_action() {
 }
 
 ask_and_create_task() {
+    ASK_AND_CREATE_TASK_RESULT=""
     # Check for existing active task
     local active_resp
     active_resp="$(fetch_active_task)"
@@ -3125,11 +3150,15 @@ ask_and_create_task() {
         printf '  \033[1;36m%s\033[0m\n' "$UX_TASK_MENU_PROMPT"
         local user_request="" guided_status=0 task_description="" task_mode="" task_user_request="" task_type_hint="" software_hint="" problem_hint="" target_hint="" error_message_hint=""
         printf '  \033[1;36m>\033[0m '
-        read_tty_with_hotkeys 1 1 || true
+        read_tty_with_hotkeys 1 1 "attach_menu_poll_event" || true
         case "$READ_TTY_ACTION" in
             bind)
                 initiate_binding
                 continue
+                ;;
+            refresh)
+                ASK_AND_CREATE_TASK_RESULT="refresh"
+                return
                 ;;
             disconnect)
                 request_explicit_disconnect
@@ -3287,6 +3316,40 @@ attach_show_status_if_changed() {
     return 0
 }
 
+pending_interaction_active_task_id() {
+    local payload="" active_task_id=""
+    payload="$(runtime_read_file "$PENDING_INTERACTION_FILE" || true)"
+    active_task_id="$(json_str active_task_id "$payload")"
+    [ -n "$active_task_id" ] || return 1
+    printf '%s\n' "$active_task_id"
+    return 0
+}
+
+attach_menu_poll_event() {
+    local completion_payload="" task_id="" interaction_payload="" interaction_id="" owner_active_task_id=""
+    completion_payload="$(runtime_read_file "$TASK_COMPLETION_FILE" || true)"
+    task_id="$(json_str task_id "$completion_payload")"
+    if [ -n "$task_id" ]; then
+        printf 'task_completion\n'
+        return 0
+    fi
+
+    interaction_payload="$(runtime_read_file "$PENDING_INTERACTION_FILE" || true)"
+    interaction_id="$(json_str interaction_id "$interaction_payload")"
+    if [ -n "$interaction_id" ]; then
+        printf 'pending_interaction\n'
+        return 0
+    fi
+
+    owner_active_task_id="$(owner_heartbeat_active_task_id)"
+    if [ -n "$owner_active_task_id" ]; then
+        printf 'active_task\n'
+        return 0
+    fi
+
+    return 1
+}
+
 attach_handle_pending_interaction() {
     local current_active_task_id="${1:-}"
     local payload="" interaction_id="" question="" interaction_type="" interaction_level="" interaction_phase="" display_question="" rendered_question="" pending_task_id="" now=""
@@ -3295,7 +3358,7 @@ attach_handle_pending_interaction() {
     [ -n "$interaction_id" ] || return 1
     [ "$interaction_id" = "$ATTACH_LAST_INTERACTION_ID" ] && return 1
     pending_task_id="$(json_str active_task_id "$payload")"
-    if [ -n "$pending_task_id" ] && { [ -z "$current_active_task_id" ] || [ "$pending_task_id" != "$current_active_task_id" ]; }; then
+    if [ -n "$pending_task_id" ] && [ -n "$current_active_task_id" ] && [ "$pending_task_id" != "$current_active_task_id" ]; then
         clear_pending_interaction_file
         return 1
     fi
@@ -3481,12 +3544,17 @@ attach_main_loop() {
             heartbeat_active_task_id="$(owner_heartbeat_active_task_id)"
             current_attach_task_id="$heartbeat_active_task_id"
         fi
+        if [ -z "$current_attach_task_id" ]; then
+            current_attach_task_id="$(pending_interaction_active_task_id || true)"
+        fi
         if [ -n "$current_attach_task_id" ]; then
             ACTIVE_TASK_ID="$current_attach_task_id"
             ACTIVE_TASK_LOOKUP_MISSES=0
-            if [ -f "$PENDING_INTERACTION_FILE" ] && tty_available; then
-                attach_handle_pending_interaction "$current_attach_task_id" || true
-            fi
+        fi
+        if [ -f "$PENDING_INTERACTION_FILE" ] && tty_available; then
+            attach_handle_pending_interaction "$current_attach_task_id" || true
+        fi
+        if [ -n "$current_attach_task_id" ]; then
             attach_show_status_if_changed "$current_attach_task_id" || true
         fi
         if [ -n "$active_id" ]; then
@@ -3518,7 +3586,7 @@ attach_main_loop() {
             continue
         fi
 
-        if [ -n "$heartbeat_active_task_id" ]; then
+        if [ -n "$current_attach_task_id" ]; then
             sleep 1
             continue
         fi
@@ -3533,11 +3601,12 @@ attach_main_loop() {
         ACTIVE_TASK_ID=""
         CONFIRMED_ACTIVE_TASK_ID=""
         ACTIVE_TASK_LOOKUP_MISSES=0
-        clear_task_runtime_state
-        reset_attach_runtime_cache
         ask_and_create_task
         if [ "$EXPLICIT_DISCONNECT_REQUESTED" -eq 1 ]; then
             return
+        fi
+        if [ "$ASK_AND_CREATE_TASK_RESULT" = "refresh" ]; then
+            continue
         fi
         sleep 1
     done
