@@ -942,9 +942,16 @@ $script:AimaShortcutDir = Join-Path $env:USERPROFILE ".local\bin"
 $script:AimaShortcutPath = Join-Path $script:AimaShortcutDir "aima.cmd"
 
 function Test-AimaShortcutInstalled {
-    if (Test-Path -LiteralPath $script:AimaShortcutPath) { return $true }
+    if (Test-Path -LiteralPath $script:AimaShortcutPath) { return (Test-AimaShortcutCurrent) }
     if (Get-Command aima -ErrorAction SilentlyContinue) { return $true }
     return $false
+}
+
+function Test-AimaShortcutCurrent {
+    if (-not (Test-Path -LiteralPath $script:AimaShortcutPath)) { return $false }
+    $content = Get-Content -LiteralPath $script:AimaShortcutPath -Raw -Encoding ascii -ErrorAction SilentlyContinue
+    if (-not $content) { return $false }
+    return $content.Contains("if ($u -match '/api/v1$')") -and $content.Contains("irm ($u + '/go')")
 }
 
 function Install-AimaShortcut {
@@ -957,7 +964,7 @@ if not defined AIMA_URL (
     echo AIMA: No saved device state. Please run the original setup command first.
     exit /b 1
 )
-powershell -NoProfile -ExecutionPolicy Bypass -Command "iex (irm '%AIMA_URL%/go')"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$u='%AIMA_URL%'.TrimEnd('/'); if ($u -match '/api/v1$') { $u = $u.Substring(0, $u.Length - 7) }; iex (irm ($u + '/go'))"
 "@
     Set-Content -LiteralPath $script:AimaShortcutPath -Value $cmdContent -Encoding ascii
 
@@ -969,9 +976,24 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "iex (irm '%AIMA_URL%/go'
     [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
 }
 
+function Ensure-AimaShortcutCurrent {
+    if (-not (Test-Path -LiteralPath $script:AimaShortcutPath)) { return }
+    if (Test-AimaShortcutCurrent) { return }
+    try {
+        Install-AimaShortcut
+        Write-Host "  ✓ $(Get-LangText '已更新旧版 aima 快捷命令。重新输入 aima 即可使用。' 'Updated the existing aima shortcut. Run aima again to use it.')" -ForegroundColor Green
+    } catch {
+        Write-Host "  ! $(Get-LangText '旧版快捷命令更新失败，不影响当前连接。' 'Existing shortcut upgrade failed; current connection is unaffected.')" -ForegroundColor Yellow
+    }
+}
+
 function Prompt-AimaShortcut {
     if ($script:RunAsOwner) { return }
-    if (Test-AimaShortcutInstalled) { return }
+    if (Test-Path -LiteralPath $script:AimaShortcutPath) {
+        Ensure-AimaShortcutCurrent
+        return
+    }
+    if (Get-Command aima -ErrorAction SilentlyContinue) { return }
 
     Write-Host ""
     Write-Host "  $(Get-LangText '是否添加 aima 快捷命令？之后只需输入 aima 即可重新连接。' 'Add aima shortcut? Then just type aima to reconnect.')" -ForegroundColor White

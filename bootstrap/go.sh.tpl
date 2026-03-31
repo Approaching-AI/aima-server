@@ -842,9 +842,19 @@ render_security_summary() {
 AIMA_SHORTCUT_PATH="${HOME}/.local/bin/aima"
 
 is_aima_shortcut_installed() {
-    [ -x "$AIMA_SHORTCUT_PATH" ] && return 0
+    if [ -x "$AIMA_SHORTCUT_PATH" ]; then
+        aima_shortcut_is_current && return 0
+        return 1
+    fi
     command -v aima >/dev/null 2>&1 && return 0
     return 1
+}
+
+aima_shortcut_is_current() {
+    [ -f "$AIMA_SHORTCUT_PATH" ] || return 1
+    grep -qF '_aima_url="${_aima_url%/api/v1}"' "$AIMA_SHORTCUT_PATH" 2>/dev/null || return 1
+    grep -qF 'curl -fsSL "${_aima_url}/go.sh" -o "$_aima_script"' "$AIMA_SHORTCUT_PATH" 2>/dev/null || return 1
+    return 0
 }
 
 install_aima_shortcut() {
@@ -859,7 +869,19 @@ if [ -z "$_aima_url" ]; then
     printf 'AIMA: No saved device state found. Please run the original setup command first.\n'
     exit 1
 fi
-exec bash <(curl -sL "${_aima_url}/go.sh") "$@"
+_aima_url="${_aima_url%/}"
+_aima_url="${_aima_url%/api/v1}"
+_aima_script="$(mktemp "${TMPDIR:-/tmp}/aima-go.XXXXXX")" || exit 1
+if ! curl -fsSL "${_aima_url}/go.sh" -o "$_aima_script"; then
+    rm -f "$_aima_script"
+    printf 'AIMA: 无法获取启动脚本：%s/go.sh\n' "$_aima_url" >&2
+    printf 'AIMA: Failed to fetch launcher script: %s/go.sh\n' "$_aima_url" >&2
+    exit 1
+fi
+bash "$_aima_script" "$@"
+_aima_status=$?
+rm -f "$_aima_script"
+exit "$_aima_status"
 WRAPPER
         chmod +x "$AIMA_SHORTCUT_PATH"
 
@@ -881,10 +903,26 @@ WRAPPER
     )
 }
 
+ensure_aima_shortcut_current() {
+    [ -x "$AIMA_SHORTCUT_PATH" ] || return 0
+    if aima_shortcut_is_current; then
+        return 0
+    fi
+    if install_aima_shortcut; then
+        printf '  \033[32m✓\033[0m %s\n' "$(lang_text '已更新旧版 aima 快捷命令。重新输入 aima 即可使用。' 'Updated the existing aima shortcut. Run aima again to use it.')"
+    else
+        warn "$(lang_text '旧版快捷命令更新失败，不影响当前连接。' 'Existing shortcut upgrade failed; current connection is unaffected.')"
+    fi
+}
+
 prompt_aima_shortcut() {
     if [ "$RUN_AS_OWNER" -eq 1 ]; then return; fi
     if ! tty_available; then return; fi
-    if is_aima_shortcut_installed; then return; fi
+    if [ -x "$AIMA_SHORTCUT_PATH" ]; then
+        ensure_aima_shortcut_current
+        return
+    fi
+    if command -v aima >/dev/null 2>&1; then return; fi
 
     printf '\n'
     printf '  \033[1m%s\033[0m\n' "$(lang_text '是否添加 aima 快捷命令？之后只需输入 aima 即可重新连接。' 'Add aima shortcut? Then just type aima to reconnect.')"
