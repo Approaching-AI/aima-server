@@ -17,6 +17,7 @@ class DeviceState:
     share_text: str = ""
     poll_interval_seconds: int = 5
     display_language: str = ""
+    nickname: str = ""
     last_notified_task_id: str = ""
 
 

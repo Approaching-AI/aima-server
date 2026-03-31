@@ -303,6 +303,10 @@ class AttachedDeviceSession:
                 share_text=str(response.get("share_text") or ""),
                 poll_interval_seconds=int(response.get("poll_interval_seconds") or self.poll_interval_seconds),
                 display_language=str(response.get("display_language") or ""),
+                nickname=self._nickname_from_payload(
+                    response,
+                    fallback=self.state.nickname if self.state is not None else "",
+                ),
             )
             self.poll_interval_seconds = state.poll_interval_seconds
             self.state_store.save(state)
@@ -381,6 +385,10 @@ class AttachedDeviceSession:
                     share_text=self.state.share_text if self.state is not None else "",
                     poll_interval_seconds=int(poll.get("poll_interval_seconds") or self.poll_interval_seconds),
                     display_language=self.state.display_language if self.state is not None else "",
+                    nickname=self._nickname_from_payload(
+                        poll,
+                        fallback=self.state.nickname if self.state is not None else "",
+                    ),
                 )
                 self.renderer.info(
                     "Browser confirmation complete. Device recovery succeeded."
@@ -1073,6 +1081,10 @@ class AttachedDeviceSession:
             return "__detach__"
         if answer.lower() in {"d", "disconnect"}:
             return "__disconnect__"
+        if answer.lower().startswith("/name"):
+            name_arg = answer[5:].strip()
+            await self._handle_rename(name_arg)
+            return None
         if answer == "0" and feedback_option is not None:
             return "feedback"
         if answer.isdigit():
@@ -1157,6 +1169,46 @@ class AttachedDeviceSession:
             )
         except Exception:
             pass
+
+    @staticmethod
+    def _nickname_from_payload(payload: dict[str, Any], *, fallback: str = "") -> str:
+        if "nickname" not in payload:
+            return fallback
+        raw = payload.get("nickname")
+        return str(raw or "")
+
+    async def _handle_rename(self, name_arg: str) -> None:
+        assert self.state is not None
+        lang = self._lang
+        if not name_arg:
+            current = self.state.nickname
+            if lang == "zh_cn":
+                self.renderer.info(f"当前设备名称：{current or '未设置'}")
+                self.renderer.info("用法：/name <新名称>    清除：/name -")
+            else:
+                self.renderer.info(f"Current device name: {current or 'not set'}")
+                self.renderer.info("Usage: /name <new name>    Clear: /name -")
+            return
+        nickname: str | None = None if name_arg == "-" else name_arg
+        if nickname and len(nickname) > 80:
+            self.renderer.warn("名称过长（最多80字符）" if lang == "zh_cn" else "Nickname too long (max 80 chars)")
+            return
+        try:
+            await self._with_reauth(
+                self.api.update_nickname,
+                device_id=self.state.device_id,
+                device_token=self.state.token,
+                nickname=nickname,
+            )
+            self.state.nickname = nickname or ""
+            self.state_store.save(self.state)
+            if nickname:
+                msg = f'Device renamed to "{nickname}"' if lang == "en_us" else f"设备已命名为「{nickname}」"
+            else:
+                msg = "Device name cleared" if lang == "en_us" else "设备名称已清除"
+            self.renderer.info(msg)
+        except Exception as exc:
+            self.renderer.warn(f"Rename failed: {exc}" if lang == "en_us" else f"改名失败：{exc}")
 
     def _refresh_window_title(self) -> None:
         if self.manifest is None:

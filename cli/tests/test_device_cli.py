@@ -1264,6 +1264,7 @@ async def test_cli_self_register_sends_hardware_id_candidates(
             "recovery_code": "rc_cli_test",
             "poll_interval_seconds": 5,
             "display_language": "en_us",
+            "nickname": "CLI Host",
         }
 
     session.api.self_register = fake_self_register  # type: ignore[method-assign]
@@ -1273,6 +1274,7 @@ async def test_cli_self_register_sends_hardware_id_candidates(
         await client.aclose()
 
     assert state.device_id == "dev_cli_test"
+    assert state.nickname == "CLI Host"
     assert captured["hardware_id"] == "hw-stable-001"
     assert captured["hardware_id_candidates"] == ["hw-stable-001", "hw-legacy-001"]
     assert captured["invite_code"] == "invite-demo"
@@ -1314,12 +1316,14 @@ async def test_cli_reprompts_when_saved_recovery_code_is_invalid(tmp_path: Path)
                 "recovery_code": "fresh-recovery-code",
                 "poll_interval_seconds": 5,
                 "display_language": "en_us",
+                "nickname": "Recovered Host",
             }
 
         session.api.self_register = fake_self_register  # type: ignore[method-assign]
         state = await session._self_register_loop(recovery_code="stale-recovery-code")
 
     assert state.device_id == "dev_cli_test"
+    assert state.nickname == "Recovered Host"
     assert len(attempts) == 2
     assert attempts[0]["recovery_code"] == "stale-recovery-code"
     assert attempts[1]["recovery_code"] == "fresh-recovery-code"
@@ -1364,17 +1368,20 @@ def test_device_state_display_language_roundtrip(tmp_path: Path) -> None:
     store = DeviceStateStore(tmp_path / "state.json")
     state = DeviceState(platform_url="http://test", device_id="dev_test", token="tok_test", recovery_code="rc")
     assert state.display_language == ""
+    assert state.nickname == ""
 
     state.display_language = "zh_cn"
+    state.nickname = "CLI Host"
     store.save(state)
 
     reloaded = store.load()
     assert reloaded is not None
     assert reloaded.display_language == "zh_cn"
+    assert reloaded.nickname == "CLI Host"
 
 
 def test_device_state_missing_display_language_defaults_empty(tmp_path: Path) -> None:
-    """Old state files without display_language should still load."""
+    """Old state files without display_language or nickname should still load."""
     state_file = tmp_path / "state.json"
     state_file.write_text(
         '{"platform_url": "http://test", "device_id": "dev_123", "token": "tok", "recovery_code": "rc"}'
@@ -1384,6 +1391,7 @@ def test_device_state_missing_display_language_defaults_empty(tmp_path: Path) ->
     state = store.load()
     assert state is not None
     assert state.display_language == ""
+    assert state.nickname == ""
     assert state.last_notified_task_id == ""
     assert state.device_id == "dev_123"
 
